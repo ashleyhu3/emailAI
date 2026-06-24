@@ -1,0 +1,57 @@
+# Python artifacts
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+
+CLAUDE.md
+
+# Virtual environments
+.venv/
+venv/
+env/
+ENV/
+research_pdfs/
+
+# Build & distribution
+build/
+dist/
+downloads/
+*.egg-info/
+.eggs/
+wheels/
+*.egg
+
+# Database
+*.db
+*.sqlite
+*.sqlite3
+
+# IDEs
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Secrets
+.env
+.python-version
+
+# Project-specific
+pdfs/
+*.pdf
+!example_financial_report.pdf
+.gemini_rate_state.json
+
+# Pipeline caches (Docling + embedding — large binary files, machine-local)
+PDF_summarizer/.cache/
+*.pkl
+token.jsoncredentials.json
+credentials.json
+token.json
+.env

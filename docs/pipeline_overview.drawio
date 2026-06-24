@@ -1,0 +1,77 @@
+<mxfile host="app.diagrams.net" type="device">
+  <diagram id="pipeline-overview" name="Pipeline Overview">
+    <mxGraphModel dx="900" dy="650" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="900" pageHeight="600" math="0" shadow="0">
+      <root>
+        <mxCell id="0" />
+        <mxCell id="1" parent="0" />
+
+        <!-- Title -->
+        <mxCell id="title" value="RAG Pipeline — High-Level Overview" style="text;html=1;align=center;verticalAlign=middle;fontSize=18;fontStyle=1;" vertex="1" parent="1">
+          <mxGeometry x="120" y="25" width="680" height="30" as="geometry" />
+        </mxCell>
+
+        <!-- ===== Grouping frames (drawn behind the boxes) ===== -->
+
+        <!-- Chatbot Loop frame (around the left column) -->
+        <mxCell id="frameLoop" value="Chatbot Loop" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f0f4ff;strokeColor=#6c8ebf;dashed=1;verticalAlign=top;align=center;fontSize=14;fontStyle=1;fontColor=#3c5a8a;spacingTop=6;" vertex="1" parent="1">
+          <mxGeometry x="110" y="75" width="300" height="470" as="geometry" />
+        </mxCell>
+
+        <!-- Data Ingestion frame (around the right column) -->
+        <mxCell id="frameIngest" value="Data Ingestion" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f7f0fa;strokeColor=#9673a6;dashed=1;verticalAlign=top;align=center;fontSize=14;fontStyle=1;fontColor=#6a4a87;spacingTop=6;" vertex="1" parent="1">
+          <mxGeometry x="510" y="75" width="300" height="470" as="geometry" />
+        </mxCell>
+
+        <!-- ===== Query loop (left column) ===== -->
+
+        <mxCell id="userPrompt" value="User Prompt" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;fontSize=14;fontStyle=1;" vertex="1" parent="1">
+          <mxGeometry x="160" y="120" width="200" height="70" as="geometry" />
+        </mxCell>
+
+        <mxCell id="classification" value="Prompt Classification" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#d5e8d4;strokeColor=#82b366;fontSize=14;fontStyle=1;" vertex="1" parent="1">
+          <mxGeometry x="160" y="270" width="200" height="70" as="geometry" />
+        </mxCell>
+
+        <mxCell id="handling" value="Prompt Handling" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffe6cc;strokeColor=#d79b00;fontSize=14;fontStyle=1;" vertex="1" parent="1">
+          <mxGeometry x="160" y="420" width="200" height="70" as="geometry" />
+        </mxCell>
+
+        <!-- ===== Ingestion + storage (right column) ===== -->
+
+        <mxCell id="fileUpload" value="User File Upload&#10;(PDF ingestion)" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#e1d5e7;strokeColor=#9673a6;fontSize=14;fontStyle=1;" vertex="1" parent="1">
+          <mxGeometry x="560" y="120" width="200" height="70" as="geometry" />
+        </mxCell>
+
+        <mxCell id="database" value="Database&#10;(Postgres + pgvector)" style="shape=cylinder3;whiteSpace=wrap;html=1;boundedLbl=1;backgroundOutline=1;size=14;fillColor=#f5f5f5;strokeColor=#666666;fontSize=14;fontStyle=1;verticalAlign=middle;" vertex="1" parent="1">
+          <mxGeometry x="585" y="410" width="150" height="100" as="geometry" />
+        </mxCell>
+
+        <!-- ===== Edges ===== -->
+
+        <mxCell id="e1" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;endArrow=block;endFill=1;strokeWidth=2;" edge="1" parent="1" source="userPrompt" target="classification">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+
+        <mxCell id="e2" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;endArrow=block;endFill=1;strokeWidth=2;" edge="1" parent="1" source="classification" target="handling">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+
+        <!-- Prompt Handling -> User Prompt (the loop / output), routed down the left side -->
+        <mxCell id="e3" value="Output to user" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;endArrow=block;endFill=1;strokeWidth=2;fontSize=12;fontStyle=1;labelBackgroundColor=#f0f4ff;exitX=0;exitY=0.5;exitDx=0;exitDy=0;entryX=0;entryY=0.5;entryDx=0;entryDy=0;" edge="1" parent="1" source="handling" target="userPrompt">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+
+        <!-- File Upload -> Database (ingest / store) -->
+        <mxCell id="e4" value="ingest / store" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;endArrow=block;endFill=1;strokeWidth=2;fontSize=12;labelBackgroundColor=#f7f0fa;exitX=0.5;exitY=1;exitDx=0;exitDy=0;entryX=0.5;entryY=0;entryDx=0;entryDy=0;" edge="1" parent="1" source="fileUpload" target="database">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+
+        <!-- Prompt Handling <-> Database (retrieve context), crosses between the two frames -->
+        <mxCell id="e5" value="retrieve context" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;startArrow=block;startFill=1;endArrow=block;endFill=1;strokeWidth=2;fontSize=12;fontStyle=1;labelBackgroundColor=#ffffff;exitX=1;exitY=0.5;exitDx=0;exitDy=0;entryX=0;entryY=0.5;entryDx=0;entryDy=0;" edge="1" parent="1" source="handling" target="database">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+
+      </root>
+    </mxGraphModel>
+  </diagram>
+</mxfile>

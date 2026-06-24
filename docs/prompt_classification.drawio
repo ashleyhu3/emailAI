@@ -1,0 +1,103 @@
+<mxfile host="app.diagrams.net" type="device">
+  <diagram id="prompt-classification" name="Prompt Classification">
+    <mxGraphModel dx="1040" dy="760" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="1040" pageHeight="760" math="0" shadow="0">
+      <root>
+        <mxCell id="0" />
+        <mxCell id="1" parent="0" />
+
+        <!-- Title -->
+        <mxCell id="title" value="Prompt Classification  (_analyze_query)" style="text;html=1;align=center;verticalAlign=middle;fontSize=18;fontStyle=1;" vertex="1" parent="1">
+          <mxGeometry x="120" y="20" width="800" height="30" as="geometry" />
+        </mxCell>
+
+        <!-- Input -->
+        <mxCell id="input" value="User Prompt&#10;+ Conversation History&#10;(+ known companies / filenames from DB)" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;fontSize=12;fontStyle=1;" vertex="1" parent="1">
+          <mxGeometry x="300" y="70" width="320" height="60" as="geometry" />
+        </mxCell>
+
+        <!-- Classifier (LLM) -->
+        <mxCell id="classify" value="Query Analysis&#10;&#10;Gemini 3.5 Flash&#10;temperature 0 · JSON output" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#fff2cc;strokeColor=#d6b656;fontSize=13;fontStyle=1;" vertex="1" parent="1">
+          <mxGeometry x="300" y="170" width="320" height="80" as="geometry" />
+        </mxCell>
+
+        <!-- Returned fields (callout) -->
+        <mxCell id="fields" value="Returns (one JSON object):&#10;&#10;• hard_filters — company, ticker, dates,&#10;   sector, coverage period&#10;• standalone_query — self-contained,&#10;   used for embedding&#10;• query_type — rag | list_documents&#10;• is_followup&#10;• is_underspecified" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#999999;dashed=1;align=left;verticalAlign=top;spacingLeft=10;spacingTop=8;fontSize=12;" vertex="1" parent="1">
+          <mxGeometry x="680" y="150" width="320" height="170" as="geometry" />
+        </mxCell>
+
+        <!-- Deterministic guards -->
+        <mxCell id="guards" value="Deterministic guards (no LLM call)&#10;&#10;• &quot;Q1 2025&quot; → coverage_period  (regex)&#10;• content list (&quot;10 trends&quot;) → query_type = rag&#10;• is_enumeration flag  (regex)" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#d5e8d4;strokeColor=#82b366;align=left;verticalAlign=top;spacingLeft=10;spacingTop=8;fontSize=12;fontStyle=1;" vertex="1" parent="1">
+          <mxGeometry x="300" y="310" width="320" height="110" as="geometry" />
+        </mxCell>
+
+        <!-- Use-case row label -->
+        <mxCell id="useLabel" value="Use cases (routing into Prompt Handling)" style="text;html=1;align=center;verticalAlign=middle;fontSize=13;fontStyle=2;fontColor=#555555;" vertex="1" parent="1">
+          <mxGeometry x="60" y="445" width="940" height="20" as="geometry" />
+        </mxCell>
+
+        <!-- Use case: Clarify -->
+        <mxCell id="ucClarify" value="Clarify&#10;ask the user to narrow&#10;(filter set, but no topic)" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;fontSize=12;fontStyle=1;" vertex="1" parent="1">
+          <mxGeometry x="70" y="480" width="220" height="80" as="geometry" />
+        </mxCell>
+
+        <!-- Use case: List Documents -->
+        <mxCell id="ucList" value="List Documents&#10;document inventory&#10;(deterministic, no generation)" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#e1d5e7;strokeColor=#9673a6;fontSize=12;fontStyle=1;" vertex="1" parent="1">
+          <mxGeometry x="330" y="480" width="220" height="80" as="geometry" />
+        </mxCell>
+
+        <!-- Use case: RAG -->
+        <mxCell id="ucRag" value="RAG&#10;answer from document content" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffe6cc;strokeColor=#d79b00;fontSize=12;fontStyle=1;" vertex="1" parent="1">
+          <mxGeometry x="590" y="480" width="220" height="80" as="geometry" />
+        </mxCell>
+
+        <!-- RAG sub-modes -->
+        <mxCell id="ragStd" value="Standard&#10;tiered threshold" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffedd6;strokeColor=#d79b00;fontSize=11;" vertex="1" parent="1">
+          <mxGeometry x="470" y="630" width="160" height="60" as="geometry" />
+        </mxCell>
+        <mxCell id="ragEnum" value="Enumeration&#10;breadth · per-doc cap" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffedd6;strokeColor=#d79b00;fontSize=11;" vertex="1" parent="1">
+          <mxGeometry x="650" y="630" width="170" height="60" as="geometry" />
+        </mxCell>
+        <mxCell id="ragFollow" value="Follow-up&#10;retrieve + history" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffedd6;strokeColor=#d79b00;fontSize=11;" vertex="1" parent="1">
+          <mxGeometry x="840" y="630" width="160" height="60" as="geometry" />
+        </mxCell>
+
+        <!-- ===== Edges ===== -->
+
+        <mxCell id="c1" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;endArrow=block;endFill=1;strokeWidth=2;" edge="1" parent="1" source="input" target="classify">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+
+        <mxCell id="c2" value="returns" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;endArrow=open;dashed=1;strokeWidth=1;fontSize=11;exitX=1;exitY=0.5;exitDx=0;exitDy=0;entryX=0;entryY=0.5;entryDx=0;entryDy=0;" edge="1" parent="1" source="classify" target="fields">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+
+        <mxCell id="c3" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;endArrow=block;endFill=1;strokeWidth=2;" edge="1" parent="1" source="classify" target="guards">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+
+        <!-- guards -> use cases -->
+        <mxCell id="c4" value="is_underspecified&#10;&amp; filter" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;endArrow=block;endFill=1;strokeWidth=2;fontSize=11;labelBackgroundColor=#ffffff;exitX=0.25;exitY=1;exitDx=0;exitDy=0;entryX=0.5;entryY=0;entryDx=0;entryDy=0;" edge="1" parent="1" source="guards" target="ucClarify">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="c5" value="query_type =&#10;list_documents" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;endArrow=block;endFill=1;strokeWidth=2;fontSize=11;labelBackgroundColor=#ffffff;exitX=0.5;exitY=1;exitDx=0;exitDy=0;entryX=0.5;entryY=0;entryDx=0;entryDy=0;" edge="1" parent="1" source="guards" target="ucList">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="c6" value="query_type = rag" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;endArrow=block;endFill=1;strokeWidth=2;fontSize=11;labelBackgroundColor=#ffffff;exitX=0.75;exitY=1;exitDx=0;exitDy=0;entryX=0.5;entryY=0;entryDx=0;entryDy=0;" edge="1" parent="1" source="guards" target="ucRag">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+
+        <!-- rag -> sub-modes -->
+        <mxCell id="c7" value="default" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;endArrow=block;endFill=1;strokeWidth=1.5;fontSize=11;exitX=0.5;exitY=1;exitDx=0;exitDy=0;entryX=0.5;entryY=0;entryDx=0;entryDy=0;" edge="1" parent="1" source="ucRag" target="ragStd">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="c8" value="&quot;list N …&quot;" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;endArrow=block;endFill=1;strokeWidth=1.5;fontSize=11;exitX=0.5;exitY=1;exitDx=0;exitDy=0;entryX=0.5;entryY=0;entryDx=0;entryDy=0;" edge="1" parent="1" source="ucRag" target="ragEnum">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="c9" value="continuation" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;endArrow=block;endFill=1;strokeWidth=1.5;fontSize=11;exitX=0.5;exitY=1;exitDx=0;exitDy=0;entryX=0.5;entryY=0;entryDx=0;entryDy=0;" edge="1" parent="1" source="ucRag" target="ragFollow">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+
+      </root>
+    </mxGraphModel>
+  </diagram>
+</mxfile>

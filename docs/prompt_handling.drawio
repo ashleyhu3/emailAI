@@ -1,0 +1,99 @@
+<mxfile host="app.diagrams.net" type="device">
+  <diagram id="prompt-handling" name="Prompt Handling">
+    <mxGraphModel dx="900" dy="700" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="980" pageHeight="1240" math="0" shadow="0">
+      <root>
+        <mxCell id="0" />
+        <mxCell id="1" parent="0" />
+
+        <mxCell id="title" value="Prompt Handling — Decision Tree (answer_question)" style="text;html=1;align=center;verticalAlign=middle;fontSize=18;fontStyle=1;" vertex="1" parent="1">
+          <mxGeometry x="230" y="10" width="520" height="30" as="geometry" />
+        </mxCell>
+
+        <!-- Input -->
+        <mxCell id="input" value="Classified query&#10;(query_type, is_followup, is_enumeration,&#10;is_underspecified, hard_filters)" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f5f5f5;strokeColor=#666666;fontSize=12;fontStyle=1;" vertex="1" parent="1">
+          <mxGeometry x="280" y="55" width="280" height="60" as="geometry" />
+        </mxCell>
+
+        <!-- D1: list_documents? -->
+        <mxCell id="d1" value="query_type ==&#10;'list_documents'?" style="rhombus;whiteSpace=wrap;html=1;fillColor=#fff2cc;strokeColor=#d6b656;fontSize=12;fontStyle=1;" vertex="1" parent="1">
+          <mxGeometry x="320" y="150" width="200" height="90" as="geometry" />
+        </mxCell>
+
+        <!-- D1 Yes branch -->
+        <mxCell id="pInv" value="Document Inventory&#10;list_documents_filtered()&#10;deterministic list · no LLM&#10;&#8627; returned to user" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#d5e8d4;strokeColor=#82b366;fontSize=12;" vertex="1" parent="1">
+          <mxGeometry x="660" y="160" width="260" height="80" as="geometry" />
+        </mxCell>
+
+        <!-- D2: underspecified? -->
+        <mxCell id="d2" value="is_underspecified?&#10;(filter present, but&#10;no concrete topic)" style="rhombus;whiteSpace=wrap;html=1;fillColor=#fff2cc;strokeColor=#d6b656;fontSize=12;fontStyle=1;" vertex="1" parent="1">
+          <mxGeometry x="320" y="290" width="200" height="100" as="geometry" />
+        </mxCell>
+
+        <!-- D2 Yes branch -->
+        <mxCell id="pClar" value="Clarify&#10;ask the user to narrow&#10;(overall summary / a name / a topic)&#10;&#8627; returned to user" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#d5e8d4;strokeColor=#82b366;fontSize=12;" vertex="1" parent="1">
+          <mxGeometry x="660" y="300" width="260" height="80" as="geometry" />
+        </mxCell>
+
+        <!-- RAG: retrieve (mode by query) -->
+        <mxCell id="retrieve" value="RAG — Retrieve chunks (pgvector cosine)&#10;mode by query type:&#10;• enumeration → breadth: threshold 0.05, per-doc cap 3&#10;• follow-up → relaxed threshold (≤0.30) + history&#10;• else → tiered threshold 0.40 / 0.30 / 0.20 (by # filters)" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffe6cc;strokeColor=#d79b00;fontSize=12;align=left;spacingLeft=10;" vertex="1" parent="1">
+          <mxGeometry x="270" y="440" width="300" height="110" as="geometry" />
+        </mxCell>
+
+        <!-- D5: any chunks? -->
+        <mxCell id="d5" value="Any chunks above&#10;the threshold?" style="rhombus;whiteSpace=wrap;html=1;fillColor=#fff2cc;strokeColor=#d6b656;fontSize=12;fontStyle=1;" vertex="1" parent="1">
+          <mxGeometry x="320" y="600" width="200" height="90" as="geometry" />
+        </mxCell>
+
+        <!-- D5 No branch -->
+        <mxCell id="fb" value="Fallback&#10;&quot;No sufficiently relevant&#10;content found&quot;&#10;&#8627; returned to user" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f8cecc;strokeColor=#b85450;fontSize=12;" vertex="1" parent="1">
+          <mxGeometry x="660" y="605" width="260" height="80" as="geometry" />
+        </mxCell>
+
+        <!-- Build context -->
+        <mxCell id="ctx" value="Build context&#10;expand each chunk with parent + sibling pages" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;fontSize=12;" vertex="1" parent="1">
+          <mxGeometry x="290" y="730" width="260" height="56" as="geometry" />
+        </mxCell>
+
+        <!-- Generate -->
+        <mxCell id="gen" value="Generate answer&#10;Gemini 3.5 Flash (+ conversation history)" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;fontSize=12;" vertex="1" parent="1">
+          <mxGeometry x="290" y="826" width="260" height="56" as="geometry" />
+        </mxCell>
+
+        <!-- Verify citations -->
+        <mxCell id="verify" value="Verify citations (document-level)&#10;• cited doc not retrieved → strip (fabrication)&#10;• right doc, unverifiable page → degrade to (doc)&#10;then consolidate" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;fontSize=12;align=left;spacingLeft=10;" vertex="1" parent="1">
+          <mxGeometry x="290" y="922" width="260" height="86" as="geometry" />
+        </mxCell>
+
+        <!-- Enforce sourced items -->
+        <mxCell id="enforce" value="(enumerations only)&#10;drop any unsourced list item + renumber" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;fontSize=12;dashed=1;" vertex="1" parent="1">
+          <mxGeometry x="290" y="1048" width="260" height="56" as="geometry" />
+        </mxCell>
+
+        <!-- Output -->
+        <mxCell id="out" value="Response + sources → user&#10;cited documents highlighted in the sidebar" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#d5e8d4;strokeColor=#82b366;fontSize=12;fontStyle=1;" vertex="1" parent="1">
+          <mxGeometry x="280" y="1144" width="280" height="64" as="geometry" />
+        </mxCell>
+
+        <!-- ===== Edges ===== -->
+        <mxCell id="x0" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;endArrow=block;strokeWidth=2;" edge="1" parent="1" source="input" target="d1"><mxGeometry relative="1" as="geometry" /></mxCell>
+
+        <mxCell id="x1y" value="Yes" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;endArrow=block;strokeWidth=2;fontSize=11;fontStyle=1;labelBackgroundColor=#ffffff;" edge="1" parent="1" source="d1" target="pInv"><mxGeometry relative="1" as="geometry" /></mxCell>
+        <mxCell id="x1n" value="No" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;endArrow=block;strokeWidth=2;fontSize=11;fontStyle=1;labelBackgroundColor=#ffffff;" edge="1" parent="1" source="d1" target="d2"><mxGeometry relative="1" as="geometry" /></mxCell>
+
+        <mxCell id="x2y" value="Yes" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;endArrow=block;strokeWidth=2;fontSize=11;fontStyle=1;labelBackgroundColor=#ffffff;" edge="1" parent="1" source="d2" target="pClar"><mxGeometry relative="1" as="geometry" /></mxCell>
+        <mxCell id="x2n" value="No (RAG)" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;endArrow=block;strokeWidth=2;fontSize=11;fontStyle=1;labelBackgroundColor=#ffffff;" edge="1" parent="1" source="d2" target="retrieve"><mxGeometry relative="1" as="geometry" /></mxCell>
+
+        <mxCell id="x3" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;endArrow=block;strokeWidth=2;" edge="1" parent="1" source="retrieve" target="d5"><mxGeometry relative="1" as="geometry" /></mxCell>
+
+        <mxCell id="x4y" value="Yes" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;endArrow=block;strokeWidth=2;fontSize=11;fontStyle=1;labelBackgroundColor=#ffffff;" edge="1" parent="1" source="d5" target="ctx"><mxGeometry relative="1" as="geometry" /></mxCell>
+        <mxCell id="x4n" value="No" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;endArrow=block;strokeWidth=2;fontSize=11;fontStyle=1;labelBackgroundColor=#ffffff;" edge="1" parent="1" source="d5" target="fb"><mxGeometry relative="1" as="geometry" /></mxCell>
+
+        <mxCell id="x5" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;endArrow=block;strokeWidth=2;" edge="1" parent="1" source="ctx" target="gen"><mxGeometry relative="1" as="geometry" /></mxCell>
+        <mxCell id="x6" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;endArrow=block;strokeWidth=2;" edge="1" parent="1" source="gen" target="verify"><mxGeometry relative="1" as="geometry" /></mxCell>
+        <mxCell id="x7" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;endArrow=block;strokeWidth=2;" edge="1" parent="1" source="verify" target="enforce"><mxGeometry relative="1" as="geometry" /></mxCell>
+        <mxCell id="x8" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;endArrow=block;strokeWidth=2;" edge="1" parent="1" source="enforce" target="out"><mxGeometry relative="1" as="geometry" /></mxCell>
+
+      </root>
+    </mxGraphModel>
+  </diagram>
+</mxfile>

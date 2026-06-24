@@ -1,0 +1,110 @@
+<mxfile host="app.diagrams.net" type="device">
+  <diagram id="data-ingestion" name="Data Ingestion">
+    <mxGraphModel dx="900" dy="800" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="960" pageHeight="730" math="0" shadow="0">
+      <root>
+        <mxCell id="0" />
+        <mxCell id="1" parent="0" />
+
+        <!-- Title -->
+        <mxCell id="title" value="Data Ingestion Pipeline" style="text;html=1;align=center;verticalAlign=middle;fontSize=18;fontStyle=1;" vertex="1" parent="1">
+          <mxGeometry x="100" y="20" width="420" height="30" as="geometry" />
+        </mxCell>
+
+        <!-- ===== Chunk hierarchy frame (drawn behind its nodes) ===== -->
+        <mxCell id="frameCluster" value="Chunk Hierarchy → RAG Context" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#fbfbf2;strokeColor=#b09500;dashed=1;verticalAlign=top;align=center;fontSize=13;fontStyle=1;fontColor=#7a6700;spacingTop=6;" vertex="1" parent="1">
+          <mxGeometry x="520" y="150" width="400" height="350" as="geometry" />
+        </mxCell>
+
+        <!-- ===== Main vertical pipeline (left) ===== -->
+
+        <mxCell id="pdfFile" value="PDF File" style="shape=document;whiteSpace=wrap;html=1;boundedLbl=1;fillColor=#dae8fc;strokeColor=#6c8ebf;fontSize=13;fontStyle=1;verticalAlign=top;spacingTop=4;" vertex="1" parent="1">
+          <mxGeometry x="252" y="70" width="140" height="64" as="geometry" />
+        </mxCell>
+
+        <mxCell id="ingestion" value="&lt;b&gt;PDF Ingestion&lt;/b&gt;&lt;div&gt;Docling — layout parse + page images&lt;/div&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#d5e8d4;strokeColor=#82b366;fontSize=13;" vertex="1" parent="1">
+          <mxGeometry x="210" y="180" width="225" height="70" as="geometry" />
+        </mxCell>
+
+        <mxCell id="summarization" value="&lt;b&gt;Model Summarization&lt;/b&gt;&lt;div&gt;Gemini 2.5 Flash&lt;/div&gt;&lt;div style=&quot;font-size:11px&quot;&gt;verbalize charts · summarize · extract metadata&lt;/div&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffe6cc;strokeColor=#d79b00;fontSize=13;" vertex="1" parent="1">
+          <mxGeometry x="190" y="300" width="265" height="90" as="geometry" />
+        </mxCell>
+
+        <mxCell id="embeddings" value="&lt;b&gt;Embeddings&lt;/b&gt;&lt;div&gt;gemini-embedding-2 (768-dim)&lt;/div&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#e1d5e7;strokeColor=#9673a6;fontSize=13;" vertex="1" parent="1">
+          <mxGeometry x="210" y="450" width="225" height="70" as="geometry" />
+        </mxCell>
+
+        <mxCell id="database" value="&lt;b&gt;Database&lt;/b&gt;&lt;div&gt;Postgres + pgvector&lt;/div&gt;" style="shape=cylinder3;whiteSpace=wrap;html=1;boundedLbl=1;backgroundOutline=1;size=14;fillColor=#f5f5f5;strokeColor=#666666;fontSize=13;verticalAlign=middle;" vertex="1" parent="1">
+          <mxGeometry x="247" y="580" width="150" height="110" as="geometry" />
+        </mxCell>
+
+        <!-- ===== Chunk hierarchy nodes ===== -->
+
+        <mxCell id="docChunk" value="Document&#10;(summary)" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;fontSize=12;" vertex="1" parent="1">
+          <mxGeometry x="650" y="195" width="140" height="40" as="geometry" />
+        </mxCell>
+
+        <mxCell id="secChunk" value="Section&#10;(summary)" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#d5e8d4;strokeColor=#82b366;fontSize=12;" vertex="1" parent="1">
+          <mxGeometry x="650" y="270" width="140" height="40" as="geometry" />
+        </mxCell>
+
+        <mxCell id="pagePrev" value="Page N-1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffe6cc;strokeColor=#d79b00;fontSize=12;" vertex="1" parent="1">
+          <mxGeometry x="535" y="350" width="95" height="42" as="geometry" />
+        </mxCell>
+
+        <mxCell id="pageCur" value="Page N" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffe6cc;strokeColor=#d79b00;fontSize=12;fontStyle=1;" vertex="1" parent="1">
+          <mxGeometry x="648" y="350" width="95" height="42" as="geometry" />
+        </mxCell>
+
+        <mxCell id="pageNext" value="Page N+1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffe6cc;strokeColor=#d79b00;fontSize=12;" vertex="1" parent="1">
+          <mxGeometry x="761" y="350" width="95" height="42" as="geometry" />
+        </mxCell>
+
+        <mxCell id="clusterCaption" value="parent + prev/next sibling IDs stored in JSON metadata — pulled in as surrounding context (parent summary + neighbor pages) at query time" style="text;html=1;align=center;verticalAlign=middle;fontSize=11;fontColor=#7a6700;" vertex="1" parent="1">
+          <mxGeometry x="535" y="415" width="370" height="70" as="geometry" />
+        </mxCell>
+
+        <!-- ===== Pipeline edges (data type transferred) ===== -->
+
+        <mxCell id="d1" value="PDF (binary)" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;endArrow=block;endFill=1;strokeWidth=2;fontSize=11;labelBackgroundColor=#ffffff;" edge="1" parent="1" source="pdfFile" target="ingestion">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+
+        <mxCell id="d2" value="Markdown + page images" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;endArrow=block;endFill=1;strokeWidth=2;fontSize=11;labelBackgroundColor=#ffffff;" edge="1" parent="1" source="ingestion" target="summarization">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+
+        <mxCell id="d3" value="text chunks (3 levels) + JSON metadata" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;endArrow=block;endFill=1;strokeWidth=2;fontSize=11;labelBackgroundColor=#ffffff;" edge="1" parent="1" source="summarization" target="embeddings">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+
+        <mxCell id="d4" value="768-dim float vectors + rows" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;endArrow=block;endFill=1;strokeWidth=2;fontSize=11;labelBackgroundColor=#ffffff;" edge="1" parent="1" source="embeddings" target="database">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+
+        <!-- Dashed link: summarization produces the 3-level chunk hierarchy -->
+        <mxCell id="dh" value="3-level chunks + sibling links" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;endArrow=open;endFill=0;dashed=1;strokeWidth=1;strokeColor=#b09500;fontSize=10;fontColor=#7a6700;labelBackgroundColor=#ffffff;exitX=1;exitY=0.5;exitDx=0;exitDy=0;entryX=0;entryY=0.5;entryDx=0;entryDy=0;" edge="1" parent="1" source="summarization" target="docChunk">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+
+        <!-- Hierarchy: parent links -->
+        <mxCell id="c1" value="parent" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;endArrow=block;endFill=1;strokeWidth=1.5;fontSize=10;labelBackgroundColor=#fbfbf2;" edge="1" parent="1" source="docChunk" target="secChunk">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+
+        <mxCell id="c2" value="parent" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;endArrow=block;endFill=1;strokeWidth=1.5;fontSize=10;labelBackgroundColor=#fbfbf2;" edge="1" parent="1" source="secChunk" target="pageCur">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+
+        <!-- Hierarchy: prev/next sibling links (bidirectional) -->
+        <mxCell id="c3" value="sibling" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;startArrow=block;startFill=1;endArrow=block;endFill=1;strokeWidth=1.5;fontSize=10;labelBackgroundColor=#fbfbf2;" edge="1" parent="1" source="pagePrev" target="pageCur">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+
+        <mxCell id="c4" value="sibling" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;startArrow=block;startFill=1;endArrow=block;endFill=1;strokeWidth=1.5;fontSize=10;labelBackgroundColor=#fbfbf2;" edge="1" parent="1" source="pageCur" target="pageNext">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+
+      </root>
+    </mxGraphModel>
+  </diagram>
+</mxfile>
