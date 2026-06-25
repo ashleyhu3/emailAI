@@ -21,9 +21,14 @@ Environment variables:
 from __future__ import annotations
 
 import concurrent.futures
+import hashlib
 import json
 import os
 import re
+import shutil
+import sqlite3
+import subprocess
+import tempfile
 from typing import List, Optional, Tuple
 from urllib.parse import urljoin, urlparse
 
@@ -41,6 +46,9 @@ _SKIP_PATTERNS = re.compile(
     r"(unsubscribe|optout|opt-out|privacy|mailto:|tel:|javascript:|"
     r"linkedin\.com|twitter\.com|facebook\.com|instagram\.com|"
     r"researchfn\.com/?$|www\.researchfn\.com/?$|"  # root domain, no path
+    r"morganstanley\.com/matrix/?$|"                 # MS Matrix homepage — not a report
+    r"ms\.email\.streetcontxt\.net|"                 # MS StreetContxt one-time tracking links — always fail automated; MS Matrix fallback handles these
+    r"linkback\.morganstanley\.com|"                 # MS weblink tracking redirects — always 403 without browser session
     r"\.(png|jpg|jpeg|gif|svg|ico|css|js|woff|woff2|ttf)(\?|$)|"
     # Government / regulatory domains — sanctions advisories, SEC filings, etc.
     r"(?:treasury\.gov|sec\.gov|fdic\.gov|federalreserve\.gov|cftc\.gov|"
@@ -73,7 +81,8 @@ _NON_RESEARCH_PDF_RE = re.compile(
 # URL patterns that look especially promising
 _REPORT_PATTERNS = re.compile(
     r"(\.pdf(\?|$)|/report|/research|/document|/download|/file|"
-    r"researchfn\.com/c/|/view|portal|access|content|publication)",
+    r"researchfn\.com/c/|/view|portal|access|content|publication|"
+    r"matrix\.ms\.com|t\.cm\.morganstanley\.com)",  # MS Matrix portal and tracking links
     re.IGNORECASE,
 )
 
@@ -147,6 +156,400 @@ def _browser_cookiejar_for_url(url: str):
         except Exception:
             pass
     return None
+
+
+# Domains whose cookies should be loaded into the headless browser to handle
+# MS research links: StreetContxt delivery → Matrix portal → PDF download.
+_BROKER_COOKIE_DOMAINS = [
+    ".morganstanley.com",
+    ".ms.com",
+    ".streetcontxt.net",
+    ".gs.com",
+    ".goldmansachs.com",
+    ".jpmorgan.com",
+    ".barclays.com",
+    ".db.com",
+    ".ubs.com",
+    ".jefferies.com",
+]
+
+# Arc browser profile paths (Chromium-based, uses "Arc Safe Storage" keychain entry)
+_ARC_COOKIE_PATHS = [
+    os.path.expanduser("~/Library/Application Support/Arc/User Data/Default/Cookies"),
+    os.path.expanduser("~/Library/Application Support/Arc/User Data/Profile 1/Cookies"),
+]
+
+
+def _decrypt_arc_cookies() -> list:
+    """
+    Read and decrypt Arc browser cookies for broker domains.
+
+    Arc uses the same AES-128-CBC encryption as Chrome but stores the key
+    under "Arc Safe Storage" in the macOS Keychain.
+    """
+    try:
+        from Crypto.Cipher import AES
+    except ImportError:
+        try:
+            subprocess.run(
+                ["pip", "install", "pycryptodome", "-q"],
+                capture_output=True,
+            )
+            from Crypto.Cipher import AES
+        except Exception:
+            return []
+
+    # Retrieve Arc's encryption key from macOS Keychain
+    result = subprocess.run(
+        ["security", "find-generic-password", "-s", "Arc Safe Storage", "-w"],
+        capture_output=True, text=True,
+    )
+    password = result.stdout.strip().encode()
+    if not password:
+        return []
+
+    key = hashlib.pbkdf2_hmac("sha1", password, b"saltysalt", 1003, dklen=16)
+    iv = b" " * 16
+
+    def _decrypt(enc: bytes) -> str:
+        data = enc[3:] if enc[:3] in (b"v10", b"v11") else enc
+        # Arc (Chromium) prepends 32 bytes of random nonce after the v10/v11 prefix.
+        # The CBC IV for the actual payload is bytes 16-32 (the second nonce block).
+        if len(data) > 32:
+            nonce_iv = data[16:32]
+            payload = data[32:]
+        else:
+            nonce_iv = iv
+            payload = data
+        cipher = AES.new(key, AES.MODE_CBC, IV=nonce_iv)
+        dec = cipher.decrypt(payload)
+        pad = dec[-1]
+        return dec[: -pad if 1 <= pad <= 16 else None].decode("utf-8", errors="replace")
+
+    cookies: list = []
+    for path in _ARC_COOKIE_PATHS:
+        if not os.path.exists(path):
+            continue
+        tmp = tempfile.mktemp(suffix=".db")
+        try:
+            shutil.copy(path, tmp)
+            conn = sqlite3.connect(tmp)
+            conn.text_factory = bytes
+            rows = conn.execute(
+                "SELECT host_key, name, encrypted_value, value, path, is_secure, expires_utc "
+                "FROM cookies"
+            ).fetchall()
+            conn.close()
+        finally:
+            try:
+                os.unlink(tmp)
+            except OSError:
+                pass
+
+        for host, name, enc_val, plain_val, cookie_path, secure, expires in rows:
+            host_str = host.decode("utf-8", errors="replace")
+            # Match only exact broker domain suffixes (avoid e.g. jobs.ubs.com matching .ubs.com)
+            if not any(
+                host_str == d.lstrip(".") or host_str.endswith(d if d.startswith(".") else f".{d}")
+                for d in _BROKER_COOKIE_DOMAINS
+            ):
+                continue
+            try:
+                value = _decrypt(enc_val) if enc_val else plain_val.decode("utf-8", errors="replace")
+            except Exception:
+                continue
+            cookie: dict = {
+                "name": name.decode("utf-8", errors="replace"),
+                "value": value,
+                "domain": host_str if host_str.startswith(".") else f".{host_str}",
+                "path": cookie_path.decode("utf-8", errors="replace") if cookie_path else "/",
+                "secure": bool(secure),
+            }
+            # Chrome epoch: microseconds since 1601-01-01; convert to Unix seconds
+            if expires and expires > 0:
+                unix_ts = (expires / 1_000_000) - 11_644_473_600
+                if unix_ts > 0:
+                    cookie["expires"] = unix_ts
+            cookies.append(cookie)
+
+    return cookies
+
+
+def _fetch_pdf_with_playwright(url: str, timeout_ms: int = 30_000) -> Optional[Tuple[str, bytes]]:
+    """
+    Launch a headless Chromium browser with Arc browser cookies injected,
+    navigate to ``url``, and capture any PDF that gets downloaded or served.
+
+    Returns ``(filename, pdf_bytes)`` or ``None``.
+    """
+    try:
+        from playwright.sync_api import sync_playwright, TimeoutError as PWTimeout
+    except ImportError:
+        return None
+
+    raw_cookies = _decrypt_arc_cookies()
+
+    # Convert to Playwright format: use url instead of domain to avoid CDP conflicts.
+    # Strip leading dot from domain to build a valid https URL.
+    def _to_pw_cookie(c: dict) -> Optional[dict]:
+        name = c["name"]
+        # Skip names with characters invalid in cookie names (CDP rejects them)
+        if any(ch in name for ch in ("/",)):
+            return None
+        # Use domain + path format to preserve subdomain scope (.matrix.ms.com etc.)
+        # Playwright accepts domain with leading dot for subdomain matching.
+        cookie: dict = {
+            "name": name,
+            "value": c["value"],
+            "domain": c["domain"],
+            "path": "/",
+        }
+        if "expires" in c:
+            cookie["expires"] = c["expires"]
+        return cookie
+
+    all_cookies = [pw for c in raw_cookies if (pw := _to_pw_cookie(c)) is not None]
+    print(f"[playwright] Launching headless browser for {url[:80]} "
+          f"({len(all_cookies)} Arc broker cookies loaded)")
+
+    pdf_data: list = []  # mutable capture for download handler
+
+    try:
+        with sync_playwright() as p:
+            browser = p.chromium.launch(headless=True)
+            ctx = browser.new_context(accept_downloads=True)
+            if all_cookies:
+                good, bad = 0, 0
+                for c in all_cookies:
+                    try:
+                        ctx.add_cookies([c])
+                        good += 1
+                    except Exception:
+                        bad += 1
+                if bad:
+                    print(f"[playwright] Cookies injected: {good} ok, {bad} skipped")
+
+            page = ctx.new_page()
+
+            def on_download(dl):
+                try:
+                    path = dl.path()
+                    if path:
+                        with open(path, "rb") as fh:
+                            data = fh.read()
+                        if data[:4] == b"%PDF":
+                            name = dl.suggested_filename or "report.pdf"
+                            pdf_data.append((name, data))
+                            print(f"[playwright] Captured download: {name} ({len(data):,} bytes)")
+                except Exception as e2:
+                    print(f"[playwright] Download capture error: {e2}")
+
+            page.on("download", on_download)
+
+            try:
+                resp = page.goto(url, timeout=timeout_ms, wait_until="domcontentloaded")
+            except PWTimeout:
+                print(f"[playwright] Page load timed out: {url[:80]}")
+                ctx.close(); browser.close()
+                return None
+
+            # Matrix SPA takes ~12s to hydrate after DOMContentLoaded;
+            # wait for JS to render and any auto-downloads to trigger.
+            page.wait_for_timeout(15_000)
+
+            # If a download was captured, return it
+            if pdf_data:
+                ctx.close(); browser.close()
+                return pdf_data[0]
+
+            # Check if the final page itself is a PDF (content-type or magic bytes)
+            if resp and "pdf" in (resp.headers.get("content-type") or "").lower():
+                body = page.evaluate("() => document.body?.innerText || ''")
+                # body is text-decoded; we need raw bytes — fall through
+                pass
+
+            # Look for a direct PDF <a> or <embed> link on the loaded page
+            final_url = page.url
+            pdf_link = page.evaluate("""() => {
+                const a = document.querySelector('a[href$=".pdf"], a[href*="/download"], a[href*="pdf"]');
+                return a ? a.href : null;
+            }""")
+            if pdf_link:
+                print(f"[playwright] Found PDF link on page: {pdf_link[:80]}")
+                try:
+                    with page.expect_download(timeout=timeout_ms) as dl_info:
+                        page.goto(pdf_link, timeout=timeout_ms)
+                    dl = dl_info.value
+                    path = dl.path()
+                    if path:
+                        with open(path, "rb") as fh:
+                            data = fh.read()
+                        if data[:4] == b"%PDF":
+                            name = dl.suggested_filename or "report.pdf"
+                            ctx.close(); browser.close()
+                            return name, data
+                except Exception:
+                    pass
+
+            ctx.close()
+            browser.close()
+    except Exception as e:
+        print(f"[playwright] Error: {e}")
+
+    return None
+
+
+def fetch_ms_matrix_pdf(
+    company_name: str,
+    report_date: Optional[str] = None,
+    timeout_ms: int = 45_000,
+) -> Optional[Tuple[str, bytes]]:
+    """
+    Search MS Matrix research feed for today's report on *company_name* and
+    download its PDF using the authenticated Arc browser session.
+
+    This bypasses StreetContxt one-time tracking links by querying the Matrix
+    feed API directly, which requires only the user's active Matrix session
+    cookies (read from Arc).
+
+    Args:
+        company_name: Company ticker or name to match (case-insensitive substring).
+        report_date: Optional ISO date string (YYYY-MM-DD) to restrict matches.
+        timeout_ms: Playwright navigation timeout in milliseconds.
+
+    Returns:
+        ``(filename, pdf_bytes)`` or ``None``.
+    """
+    import base64
+
+    try:
+        from playwright.sync_api import sync_playwright, TimeoutError as PWTimeout
+    except ImportError:
+        return None
+
+    cookies = _decrypt_arc_cookies()
+    if not cookies:
+        return None
+
+    def _to_pw(c: dict) -> Optional[dict]:
+        if "/" in c["name"]:
+            return None
+        cookie: dict = {"name": c["name"], "value": c["value"],
+                        "domain": c["domain"], "path": "/"}
+        if "expires" in c:
+            cookie["expires"] = c["expires"]
+        return cookie
+
+    pw_cookies = [pw for c in cookies if (pw := _to_pw(c)) is not None]
+
+    company_lower = company_name.lower()
+
+    try:
+        with sync_playwright() as p:
+            browser = p.chromium.launch(headless=True)
+            ctx = browser.new_context(accept_downloads=True)
+            for c in pw_cookies:
+                try:
+                    ctx.add_cookies([c])
+                except Exception:
+                    pass
+
+            page = ctx.new_page()
+            feed_payload: list = []
+
+            def _capture_feed(resp):
+                if resp.url.endswith("/feed") and "research-feed" in resp.url:
+                    try:
+                        import json as _json
+                        feed_payload.append(_json.loads(resp.body()))
+                    except Exception:
+                        pass
+
+            page.on("response", _capture_feed)
+
+            # Load the research feed page to trigger the feed API call
+            print(f"[ms_matrix] Loading research feed to find '{company_name}'")
+            try:
+                page.goto(
+                    "https://ny.matrix.ms.com/eqr/research/portal/feed",
+                    timeout=timeout_ms,
+                    wait_until="domcontentloaded",
+                )
+            except PWTimeout:
+                pass
+            page.wait_for_timeout(8_000)
+
+            if not feed_payload:
+                print("[ms_matrix] No feed data captured")
+                ctx.close(); browser.close()
+                return None
+
+            # Find matching articles by company name (and optional date)
+            all_cards = feed_payload[0].get("all", {}).get("feedCards", [])
+            matches = [
+                c for c in all_cards
+                if company_lower in c.get("hl", "").lower()
+                and (not report_date or report_date in c.get("pd", ""))
+            ]
+
+            if not matches:
+                print(f"[ms_matrix] No feed articles matched '{company_name}'")
+                ctx.close(); browser.close()
+                return None
+
+            article = matches[0]
+            article_path = article.get("reportUrl", "")
+            article_url = f"https://ny.matrix.ms.com{article_path}"
+            print(f"[ms_matrix] Found: {article.get('hl','')[:60]} → {article_url[:80]}")
+
+            # Navigate to the article to find the PDF rendition URL
+            try:
+                page.goto(article_url, timeout=timeout_ms, wait_until="domcontentloaded")
+            except PWTimeout:
+                pass
+            page.wait_for_timeout(8_000)
+
+            pdf_href = page.evaluate("""() => {
+                const a = document.querySelector('a[href*="/rendition/pdf/"]');
+                return a ? a.href : null;
+            }""")
+
+            if not pdf_href:
+                print("[ms_matrix] No PDF rendition link found on article page")
+                ctx.close(); browser.close()
+                return None
+
+            print(f"[ms_matrix] PDF URL: {pdf_href[:80]}")
+
+            # Download via JS fetch (stays in authenticated session)
+            result = page.evaluate(f"""async () => {{
+                const resp = await fetch({repr(pdf_href)}, {{credentials:'include'}});
+                if (!resp.ok) return {{error: resp.status + ' ' + resp.statusText}};
+                const buf = await resp.arrayBuffer();
+                const bytes = new Uint8Array(buf);
+                let bin = '';
+                bytes.forEach(b => bin += String.fromCharCode(b));
+                return {{b64: btoa(bin), size: buf.byteLength}};
+            }}""")
+
+            ctx.close(); browser.close()
+
+            if "error" in result:
+                print(f"[ms_matrix] PDF fetch failed: {result['error']}")
+                return None
+
+            pdf_bytes = base64.b64decode(result["b64"])
+            if pdf_bytes[:4] != b"%PDF":
+                print("[ms_matrix] Downloaded content is not a PDF")
+                return None
+
+            filename = pdf_href.split("/")[-1].split("?")[0]
+            print(f"[ms_matrix] Downloaded PDF: {filename} ({len(pdf_bytes):,} bytes)")
+            return filename, pdf_bytes
+
+    except Exception as e:
+        print(f"[ms_matrix] Error: {e}")
+        return None
 
 
 def _cookies_for_url(url: str, portal_cookies: dict) -> dict:
@@ -250,6 +653,15 @@ def fetch_pdf_from_url(
         session = requests.Session()
         if _extra_cookiejar is not None:
             session.cookies.update(_extra_cookiejar)
+        # Pre-load ALL configured portal cookies into the session so that
+        # cross-domain redirects carry authentication (e.g. MS tracking links
+        # t.cm.morganstanley.com → ny.matrix.ms.com need ms.com cookies).
+        for _pck_str in portal_cookies.values():
+            for _pair in _pck_str.split(";"):
+                _pair = _pair.strip()
+                if "=" in _pair:
+                    _k, _v = _pair.split("=", 1)
+                    session.cookies.set(_k.strip(), _v.strip())
         try:
             resp = session.get(
                 url,
@@ -277,11 +689,19 @@ def fetch_pdf_from_url(
         resp.raise_for_status()
     except requests.Timeout:
         print(f"[link_extractor] Timeout fetching {url[:80]}")
+        if _depth == 0:
+            result = _fetch_pdf_with_playwright(url)
+            if result:
+                return result
         return None
     except requests.HTTPError as e:
         status = e.response.status_code if e.response is not None else "?"
-        # Auth-like errors: retry once with browser cookies before giving up
-        if status in (401, 403, 500) and _depth == 0:
+        if _depth == 0:
+            # Try headless browser first (handles auth portals + JS redirects)
+            result = _fetch_pdf_with_playwright(url)
+            if result:
+                return result
+            # Then fall back to plain browser-cookie injection
             browser_cj = _browser_cookiejar_for_url(url)
             if browser_cj is not None:
                 return fetch_pdf_from_url(
@@ -289,12 +709,16 @@ def fetch_pdf_from_url(
                     max_depth=max_depth, _depth=_depth + 1,
                     _extra_cookiejar=browser_cj,
                 )
-            print(f"[link_extractor] HTTP {status} — no browser cookies found for this domain: {url[:80]}")
+            print(f"[link_extractor] HTTP {status} — no browser session found: {url[:80]}")
         else:
             print(f"[link_extractor] HTTP {status} for {url[:80]}")
         return None
     except requests.RequestException as e:
         print(f"[link_extractor] Failed {url[:80]}: {type(e).__name__}")
+        if _depth == 0:
+            result = _fetch_pdf_with_playwright(url)
+            if result:
+                return result
         return None
 
     # ── Direct PDF ────────────────────────────────────────────────────────────

@@ -13,10 +13,23 @@ import io
 import os
 import re
 import tempfile
+import unicodedata
 from pathlib import Path
 from typing import List, Optional, Tuple
 
 from bs4 import BeautifulSoup
+
+
+# ── CJK-aware text length ─────────────────────────────────────────────────────
+# Chinese/Japanese/Korean text has no word-boundary spaces, so len(text.split())
+# returns ~1 for a whole paragraph. Count each CJK character as one "word" so
+# the chunker's min/max_chunk_words thresholds work correctly for both scripts.
+_CJK_RE = re.compile(r'[⺀-鿿豈-﫿︰-﹏＀-￯]')
+
+def _word_count(text: str) -> int:
+    cjk_chars = len(_CJK_RE.findall(text))
+    latin_words = len(text.split()) if cjk_chars == 0 else len(re.sub(_CJK_RE, '', text).split())
+    return cjk_chars + latin_words
 
 try:
     import markdownify as md_lib
@@ -222,14 +235,15 @@ def email_html_to_rag_chunks(
     def _flush(text: str) -> None:
         nonlocal chunk_idx
         text = re.sub(r"\s{2,}", " ", text).strip()
-        if not text or len(text.split()) < min_chunk_words:
+        if not text or _word_count(text) < min_chunk_words:
             return
-        if len(text.split()) > max_chunk_words:
-            sentences = re.split(r"(?<=[.!?])\s+", text)
+        if _word_count(text) > max_chunk_words:
+            # Split on English sentence boundaries OR CJK sentence-ending punctuation
+            sentences = re.split(r"(?<=[.!?。！？])\s*", text)
             part: List[str] = []
             for sent in sentences:
                 part.append(sent)
-                if len(" ".join(part).split()) >= max_chunk_words // 2:
+                if _word_count(" ".join(part)) >= max_chunk_words // 2:
                     chunks.append(_make_chunk(" ".join(part), chunk_idx, broker))
                     chunk_idx += 1
                     part = []
@@ -260,13 +274,13 @@ def email_html_to_rag_chunks(
         r"[|•·—\-]{3,}|\d{1,2}[./]\d{1,2}[./]\d{2,4})$",
         re.I,
     )
-    blocks = [b for b in raw_blocks if not _NOISE_RE.match(b) and len(b.split()) >= 3]
+    blocks = [b for b in raw_blocks if not _NOISE_RE.match(b) and _word_count(b) >= 3]
 
     buffer = ""
     for block in blocks:
         if buffer:
             combined = buffer + " " + block
-            if len(combined.split()) > max_chunk_words:
+            if _word_count(combined) > max_chunk_words:
                 _flush(buffer)
                 buffer = block
             else:

@@ -273,7 +273,7 @@ async def route_query(req: RouteQueryRequest):
     Phase 3  Agent 6 synthesizes a cited answer from retrieved chunks using gemini-2.5-pro.
     """
     from dependencies import get_db, get_rag
-    from ingest.agents import run_agent4_gateway, run_agent5_query_composer, run_agent6_synthesis
+    from ingest.query_agents import run_agent4_gateway, run_agent5_query_composer, run_agent6_synthesis
     from rag_gemini import RetrievalFilters
     from sqlalchemy import text as sa_text
 

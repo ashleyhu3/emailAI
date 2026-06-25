@@ -36,11 +36,20 @@ _DATE_WORDY = re.compile(
     re.I,
 )
 _DATE_SLASH = re.compile(r'\b(\d{1,2})[./](\d{1,2})[./](20\d{2})\b')
+# Chinese date format: 2024年6月24日 or 2024年06月24日
+_DATE_CJK = re.compile(r'(20\d{2})\s*年\s*(1[0-2]|0?[1-9])\s*月\s*(3[01]|[12]\d|0?[1-9])\s*日')
 
 
 def _try_parse_date(text: str) -> Optional[date]:
     """Try multiple date formats in text, return first successful parse."""
     m = _DATE_ISO.search(text)
+    if m:
+        try:
+            return date(int(m.group(1)), int(m.group(2)), int(m.group(3)))
+        except ValueError:
+            pass
+
+    m = _DATE_CJK.search(text)
     if m:
         try:
             return date(int(m.group(1)), int(m.group(2)), int(m.group(3)))
@@ -76,23 +85,36 @@ _ACTION_REGEXES: Dict[str, list] = {
         re.compile(r'\braised?\s+(?:rating\s+)?to\b', re.I),
         re.compile(r'\bbuy\s+from\s+(?:neutral|hold)\b', re.I),
         re.compile(r'\blifted?\s+to\b', re.I),
+        # Chinese: 上调 (upgrade), 升级评级, 由...上调至
+        re.compile(r'上调(?:评级|至)?'),
+        re.compile(r'升级(?:评级)?'),
     ],
     "d": [
         re.compile(r'\bdowngrad', re.I),
         re.compile(r'\bcut(?:ting)?\s+(?:rating\s+)?to\b', re.I),
         re.compile(r'\breduced?\s+to\b', re.I),
         re.compile(r'\bsell\s+from\s+(?:neutral|buy)\b', re.I),
+        # Chinese: 下调 (downgrade), 降级评级
+        re.compile(r'下调(?:评级|至)?'),
+        re.compile(r'降级(?:评级)?'),
     ],
     "id": [
         re.compile(r'\binitiati', re.I),
         re.compile(r'\bcommence[sd]?\s+coverage\b', re.I),
         re.compile(r'\bstart(?:ing|ed)?\s+coverage\b', re.I),
+        # Chinese: 首次覆盖 (initiate coverage), 开始覆盖
+        re.compile(r'首次(?:覆盖|评级)'),
+        re.compile(r'开始覆盖'),
+        re.compile(r'启动覆盖'),
     ],
     "m": [
         re.compile(r'\bmaintain', re.I),
         re.compile(r'\breiterat', re.I),
         re.compile(r'\breaffirm', re.I),
         re.compile(r'\baffirm', re.I),
+        # Chinese: 维持 (maintain), 重申
+        re.compile(r'维持(?:评级|买入|增持|中性|减持|卖出)?'),
+        re.compile(r'重申(?:评级)?'),
     ],
 }
 
@@ -119,6 +141,20 @@ _RATING_RULES = [
     (re.compile(r'\bunderweight\b', re.I), "Underweight"),
     (re.compile(r'\bunderperform\b', re.I), "Underweight"),
     (re.compile(r'\bsell\b', re.I), "Underweight"),
+    # Chinese ratings
+    # Overweight: 买入 (buy), 增持 (accumulate/overweight), 强烈推荐 (strong buy)
+    (re.compile(r'(?:^|[\s,，])买入(?:$|[\s,，\)）])'), "Overweight"),
+    (re.compile(r'增持'), "Overweight"),
+    (re.compile(r'强烈推荐'), "Overweight"),
+    (re.compile(r'推荐'), "Overweight"),
+    # Equal-weight: 中性 (neutral), 持有 (hold), 观望
+    (re.compile(r'中性'), "Equal-weight"),
+    (re.compile(r'持有'), "Equal-weight"),
+    (re.compile(r'观望'), "Equal-weight"),
+    # Underweight: 减持 (reduce/underweight), 卖出 (sell), 回避 (avoid)
+    (re.compile(r'减持'), "Underweight"),
+    (re.compile(r'卖出'), "Underweight"),
+    (re.compile(r'回避'), "Underweight"),
 ]
 
 
@@ -136,6 +172,9 @@ _TP_PATTERNS = [
     re.compile(r'target\s+(?:price|of)\s*[$£¥]?\s*([\d,]+(?:\.\d+)?)', re.I),
     re.compile(r'[$£¥]\s*([\d,]+(?:\.\d+)?)\s*(?:price\s+target|PT)', re.I),
     re.compile(r'(?:raises?|lowers?|cuts?|maintains?)\s+(?:PT|target)\s+(?:to\s+)?[$£¥]?\s*([\d,]+(?:\.\d+)?)', re.I),
+    # Chinese: 目标价 (target price), 目标价格
+    re.compile(r'目标(?:价格?|股价)\s*[：:为]?\s*(?:港元|人民币|元|¥|HK\$|CNY|RMB)?\s*([\d,]+(?:\.\d+)?)'),
+    re.compile(r'(?:港元|人民币|元|HK\$|CNY|RMB)\s*([\d,]+(?:\.\d+)?)\s*(?:目标价?|TP)'),
 ]
 
 
@@ -315,6 +354,10 @@ _SIGNAL_RE = [
     re.compile(r'(?:upgrade|downgrade|initiat|maintain|reiterat)', re.I),
     re.compile(r'(?:\beps\b|\bp/e\b|earnings\s+per)', re.I),
     re.compile(r'(?:summary|recommendation|investment\s+(?:view|thesis|case))', re.I),
+    # Chinese signal keywords for AOIM section targeting
+    re.compile(r'评级|目标价|买入|增持|减持|卖出|中性|持有|上调|下调|维持'),
+    re.compile(r'盈利预测|净利润|每股收益|市盈率|EPS|PE'),
+    re.compile(r'投资建议|研究结论|核心观点|风险提示'),
 ]
 
 
@@ -449,9 +492,16 @@ def repair_metadata_fields(data: dict) -> dict:
 # ── Report relevance triage ───────────────────────────────────────────────────
 
 _REPORT_RE = re.compile(
+    r'(?:'
+    # English keywords
     r'\b(?:research|analyst|rating|target\s+price|initiat|upgrade|downgrade|'
     r'recommend|report|note|coverage|outlook|forecast|preview|earnings\s+(?:call|report)|'
-    r'overweight|underweight|neutral|buy|sell|hold|investment\s+(?:view|thesis))\b',
+    r'overweight|underweight|neutral|buy|sell|hold|investment\s+(?:view|thesis))\b'
+    # Chinese keywords: 研究报告, 分析师, 评级, 目标价, 买入, 增持, 减持, 卖出, 中性, 持有,
+    #   首次覆盖, 上调, 下调, 维持, 盈利预测, 投资建议
+    r'|研究(?:报告|员)|分析师|评级|目标价|买入|增持|减持|卖出|中性持有'
+    r'|首次覆盖|上调评级|下调评级|维持评级|盈利预测|投资建议|研报'
+    r')',
     re.I,
 )
 
@@ -467,7 +517,9 @@ _NON_REPORT_RE = re.compile(
 _HARD_NON_REPORT_RE = re.compile(
     r'\b(?:trade\s+confirm(?:ation)?|settlement\s+notice|execution\s+report|'
     r'account\s+statement|password\s+reset|login\s+alert|'
-    r'invoice\s+(?:attached|enclosed)|order\s+(?:receipt|confirmation))\b',
+    r'invoice\s+(?:attached|enclosed)|order\s+(?:receipt|confirmation)|'
+    r'sales\s+and\s+trading\s+(?:note|department)|'   # S&T notes are explicitly not research
+    r'not\s+a\s+product\s+of\s+(?:the\s+)?jefferies\s+research)\b',
     re.I,
 )
 
@@ -505,8 +557,31 @@ _INVITATION_RE = re.compile(
     re.I,
 )
 
+# Invitation signals strong enough to block even when _REPORT_RE fires in the body.
+# Applied to SUBJECT ONLY — broker email footers always contain "Analyst"/"RESEARCH",
+# so the normal invitation check (which requires absence of _REPORT_RE) never fires.
+_HARD_INVITATION_SUBJECT_RE = re.compile(
+    r'(?:'
+    r'\bsave\s+the\s+date\b|'
+    r'\bJEF\s+Access[:\s]|'                       # Jefferies event series
+    r'Jefferies\s+Hosts?\s*[|:]|'                 # Jefferies NDR/conference host
+    r'\bfireside\s+chat\b|'                       # any broker fireside chat
+    r'\bbull[/\\]bear\s+(?:debate|panel)\b|'      # debate webinars
+    r'\bnon[-\s]deal\s+roadshow\b|'               # NDR invitations
+    r'\bdaily\s+summ(?:ary|aries)\b|'             # corporate access digest
+    r'\bglobal\s+access\s+daily\b|'               # e.g. "Asia Pacific Global Access Daily"
+    r'\bweekly\s+(?:download|update|digest)\b|'  # webinar series
+    r"What[’']s\s+Next\?|"                    # webinar series title (straight or curly apostrophe)
+    r'\bwebinar\b|'                               # any webinar mention in subject
+    r'\bpre[-\s]deal\s+investor\s+education\b|'  # IPO roadshow PDIE
+    r'\bmight\s+this\s+be\s+of\s+interest\b'     # Jefferies NDR/IPO solicitation phrase
+    r')',
+    re.I,
+)
+
 # Compliance / regulatory disclosure PDF patterns — applied to PDF *content*, not email body.
 _COMPLIANCE_PDF_RE = re.compile(
+    r'(?:'
     r'\b(?:'
     r'compliance\s+disclosure|'
     r'regulatory\s+(?:disclosure|filing|notice)|'
@@ -517,7 +592,13 @@ _COMPLIANCE_PDF_RE = re.compile(
     r'annual\s+report\s+to\s+(?:shareholders|investors)\b|'
     r'proxy\s+statement\b|'
     r'material\s+changes?\s+(?:to|in)\s+(?:our|the)\s+(?:firm|business|services)\b'
-    r')\b',
+    r')\b'
+    # Chinese compliance/legal document signals (免责声明-only docs, regulatory filings)
+    r'|招股(?:说明)?书'      # prospectus
+    r'|年度报告(?:全文)?$'   # annual report (standalone)
+    r'|(?:信息披露|信披)公告' # regulatory disclosure notice
+    r'|隐私(?:政策|声明)'    # privacy policy
+    r')',
     re.I,
 )
 
@@ -562,6 +643,12 @@ def is_likely_research_report(
     # Hard block: trade confirmations, account statements, etc. — reject regardless
     if _HARD_NON_REPORT_RE.search(text):
         return False, "hard_block"
+
+    # Subject-level hard invitation block: fires even when _REPORT_RE matches in the body.
+    # Broker email footers always contain "Analyst"/"RESEARCH"/"Note", which normally
+    # neutralises the invitation check below. Checking the subject alone avoids that trap.
+    if _HARD_INVITATION_SUBJECT_RE.search(subject or ''):
+        return False, "invitation_subject"
 
     # Pure event/invitation: reject even from known brokers when there's no research signal.
     # E.g. "You're invited to our Asia Macro Forum" with no ratings/targets.

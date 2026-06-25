@@ -39,8 +39,8 @@ from database import DatabaseManager
 from broker_cache import BrokerContextCache
 from ingest.email_fetcher import fetch_broker_emails, load_config, EmailPayload
 from ingest.preprocessor import clean_html_to_aoim, slice_pdf_pages_to_aoim, full_pdf_to_rag_chunks, email_html_to_rag_chunks
-from ingest.agents import run_agent1, extract_metadata, FinancialReportMetadata
-from ingest.link_extractor import extract_pdfs_from_email
+from ingest.extraction_agents import run_agent1, extract_metadata, FinancialReportMetadata
+from ingest.link_extractor import extract_pdfs_from_email, fetch_ms_matrix_pdf
 from ingest.extractor import (
     extract_fields_deterministically,
     extract_relevant_aoim_sections,
@@ -359,6 +359,35 @@ def _process_email(payload: EmailPayload) -> dict:
         except Exception as e:
             print(f"[ingest] Link extraction failed: {e}")
 
+    # ── 4b. MS Matrix fallback: search feed for matching article + download PDF ─
+    # StreetContxt links in MS emails are one-time-use and often time out before
+    # our pipeline can follow them.  When no PDF was captured, query Matrix
+    # directly using Arc's authenticated session cookies.
+    if not payload.pdf_attachments and (payload.broker or "").lower() == "morgan stanley":
+        import re as _re
+        import datetime as _dt
+        # Strip common email prefixes (FW:, RE:, IDEA:, FWD: etc.) then match
+        # the first colon-delimited segment as company name.
+        cleaned_subj = _re.sub(
+            r"^(?:(?:fw|fwd|re|idea|note|update|flash|alert)\s*:\s*)+",
+            "",
+            (payload.subject or ""),
+            flags=_re.IGNORECASE,
+        ).strip()
+        m = _re.match(r"([^:]+):", cleaned_subj)
+        company = m.group(1).strip() if m else None
+        if company:
+            today = _dt.date.today().isoformat()
+            # Use deterministic date if extracted, else today
+            report_date = str(pre_extracted.report_date) if pre_extracted.report_date else today
+            try:
+                ms_pdf = fetch_ms_matrix_pdf(company, report_date=report_date)
+                if ms_pdf:
+                    print(f"[ingest] MS Matrix PDF fetched via feed search: {ms_pdf[0]}")
+                    payload.pdf_attachments.append(ms_pdf)
+            except Exception as e:
+                print(f"[ingest] MS Matrix feed search failed: {e}")
+
     # ── 5. Process PDF attachments ────────────────────────────────────────────
     for pdf_filename, pdf_bytes in payload.pdf_attachments:
         try:
@@ -438,6 +467,8 @@ def _process_email(payload: EmailPayload) -> dict:
             sender_name=payload.sender,
             sender_company=payload.broker,
             sent_date=sent_date,
+            written_date=metadata.report_date,
+            tickers=metadata.tickers or [],
             broker=metadata.broker,
             broker_action=metadata.broker_action,
             rating=metadata.rating,

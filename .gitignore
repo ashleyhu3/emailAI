@@ -51,7 +51,6 @@ pdfs/
 # Pipeline caches (Docling + embedding — large binary files, machine-local)
 PDF_summarizer/.cache/
 *.pkl
-token.jsoncredentials.json
 credentials.json
 token.json
 .env
