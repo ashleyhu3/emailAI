@@ -54,3 +54,7 @@ PDF_summarizer/.cache/
 credentials.json
 token.json
 .env
+
+# Graphify knowledge graph outputs
+graphify-out/
+*-graphify-out/

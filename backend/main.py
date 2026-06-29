@@ -4,7 +4,7 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from routes import documents, queries, agent_routes, canvas, ingest
+from routes import documents, queries, agent_routes, canvas, ingest, charts
 
 
 @asynccontextmanager
@@ -37,6 +37,7 @@ app.include_router(queries.router,   prefix="/queries",   tags=["queries"])
 app.include_router(agent_routes.router, prefix="/agent",  tags=["agent"])
 app.include_router(canvas.router,    prefix="/canvas",    tags=["canvas"])
 app.include_router(ingest.router,    prefix="/ingest",    tags=["ingest"])
+app.include_router(charts.router,    prefix="/charts",    tags=["charts"])
 
 
 @app.get("/health")

@@ -1,4 +1,5 @@
 """RAG query routes."""
+import re
 from typing import Optional
 
 from fastapi import APIRouter, Depends
@@ -10,12 +11,63 @@ from models import AskRequest, AskResponse, BackfillResponse, ChunkRef, HistoryM
 
 router = APIRouter()
 
+# Patterns that trigger a Morgan Stanley chart response
+_MS_CHART_RE = re.compile(
+    r"(?:show|get|give|list|display|chart|graph|plot|visuali[sz]e).*"
+    r"(?:morgan\s*stanley|ms|m\.s\.).*"
+    r"(?:report|research|coverage|note|idea|initiat|upgrade|downgrade|rating)",
+    re.IGNORECASE,
+)
+_MONTHS_RE = re.compile(
+    r"(?:past|last)\s+(\d+)\s+months?|"
+    r"(\d+)\s+months?\s+(?:ago|back)|"
+    r"(?:past|last)\s+(one|two|three|six|twelve|1|2|3|6|12)\s+months?",
+    re.IGNORECASE,
+)
+_MONTH_WORDS = {"one": 1, "two": 2, "three": 3, "six": 6, "twelve": 12}
+
+
+def _parse_months(question: str) -> int:
+    m = _MONTHS_RE.search(question)
+    if m:
+        raw = m.group(1) or m.group(2) or m.group(3) or "3"
+        return _MONTH_WORDS.get(raw.lower(), int(raw) if raw.isdigit() else 3)
+    if re.search(r"\bmonth\b", question, re.IGNORECASE):
+        return 1
+    return 3
+
 
 @router.post("/ask", response_model=AskResponse)
 async def ask_question(
     req: AskRequest,
     rag: GeminiRAGPipeline = Depends(get_rag),
 ):
+    # Chart shortcut — detect "show me MS reports" style queries
+    if _MS_CHART_RE.search(req.question):
+        months = _parse_months(req.question)
+        try:
+            from charts_util import generate_ms_research_chart
+            chart_html, n_companies = await run_in_threadpool(
+                generate_ms_research_chart, months
+            )
+            months_label = f"{months} month" + ("s" if months != 1 else "")
+            if n_companies == 0:
+                answer = f"No Morgan Stanley research found for the past {months_label}. Try running an ingest first."
+                chart_html = None
+            else:
+                answer = (
+                    f"Here is the Morgan Stanley research risk-reward chart for the past {months_label} "
+                    f"({n_companies} compan{'ies' if n_companies != 1 else 'y'})."
+                )
+            return AskResponse(
+                answer=answer,
+                chunks_used=[],
+                query_type="chart",
+                chart_html=chart_html,
+            )
+        except Exception as e:
+            pass  # fall through to normal RAG on chart failure
+
     filters = RetrievalFilters(
         document_ids=req.document_ids,
         filenames=req.filenames,

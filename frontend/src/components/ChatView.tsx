@@ -137,6 +137,7 @@ export function ChatView() {
         chunks: result.chunks_used,
         queryType: result.query_type,
         isEnumeration: result.is_enumeration,
+        chartHtml: result.chart_html,
       });
 
       // Auto-name the session from the first user question (if still default name)
@@ -203,7 +204,7 @@ export function ChatView() {
                     {msg.content}
                   </div>
                 ) : (
-                  <div className="flex gap-3 max-w-2xl">
+                  <div className={`flex gap-3 ${msg.chartHtml ? 'w-full max-w-none' : 'max-w-2xl'}`}>
                     {/* Avatar */}
                     <div className="w-7 h-7 rounded-full bg-gray-900 flex items-center justify-center shrink-0 mt-0.5">
                       <svg className="w-3.5 h-3.5 text-white" fill="currentColor" viewBox="0 0 20 20">
@@ -211,8 +212,19 @@ export function ChatView() {
                         <path d="M10 6a1 1 0 00-1 1v3a1 1 0 00.293.707l2 2a1 1 0 001.414-1.414L11 9.586V7a1 1 0 00-1-1z" />
                       </svg>
                     </div>
-                    <div className="text-sm text-gray-800 pt-0.5">
+                    <div className={`text-sm text-gray-800 pt-0.5 ${msg.chartHtml ? 'flex-1 min-w-0' : ''}`}>
                       {renderAnswer(msg.content, msg.isEnumeration)}
+                      {msg.chartHtml && (
+                        <div className="mt-3 rounded-xl border border-gray-200 overflow-hidden shadow-sm bg-white">
+                          <iframe
+                            srcDoc={msg.chartHtml}
+                            className="w-full"
+                            style={{ height: '520px', border: 'none' }}
+                            title="Morgan Stanley Research Chart"
+                            sandbox="allow-scripts"
+                          />
+                        </div>
+                      )}
                     </div>
                   </div>
                 )}

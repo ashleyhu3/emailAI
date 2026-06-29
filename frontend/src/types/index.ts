@@ -53,8 +53,9 @@ export interface AskResponse {
   answer: string;
   chunks_used: ChunkRef[];
   inferred_filters?: Record<string, unknown>;
-  query_type?: 'rag' | 'list_documents' | 'clarify';
+  query_type?: 'rag' | 'list_documents' | 'clarify' | 'chart';
   is_enumeration?: boolean;
+  chart_html?: string;
 }
 
 export interface SubQueryResult {

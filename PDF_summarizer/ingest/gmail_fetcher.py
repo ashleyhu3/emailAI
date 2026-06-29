@@ -232,6 +232,93 @@ def is_available() -> bool:
         return False
 
 
+def fetch_broker_emails_gmail_history(
+    existing_ids: set,
+    months: int = 3,
+    broker_filter: Optional[str] = None,
+    max_emails: int = 200,
+    label: str = "INBOX",
+) -> List[EmailPayload]:
+    """
+    Fetch ALL broker emails (read + unread) from the past `months` months.
+
+    Unlike fetch_broker_emails_gmail() which only looks at unread messages,
+    this searches across all mail so historical reports can be back-filled.
+
+    Args:
+        existing_ids:  SHA-256 hashes already in the database (dedup).
+        months:        How far back to search (default 3 months).
+        broker_filter: Optional broker name filter, e.g. "Morgan Stanley".
+                       When set, only emails from that broker's domains are returned.
+        max_emails:    Maximum results to inspect.
+        label:         Gmail label to scan.
+    """
+    from datetime import date, timedelta
+
+    service = _build_service()
+    cfg = load_config()
+    broker_domains = cfg["broker_domains"]
+
+    cutoff = date.today() - timedelta(days=months * 30)
+    # Gmail date format: YYYY/MM/DD
+    after_str = cutoff.strftime("%Y/%m/%d")
+    query = f"after:{after_str}"
+
+    # Narrow to broker domains if a filter is specified
+    if broker_filter:
+        # Build "from:(domain1 OR domain2 ...)" clause
+        matching_domains = [
+            d for d, b in DOMAIN_TO_BROKER.items()
+            if broker_filter.lower() in b.lower()
+        ]
+        if matching_domains:
+            from_clause = " OR ".join(f"from:{d}" for d in matching_domains)
+            query = f"({from_clause}) after:{after_str}"
+
+    response = service.users().messages().list(
+        userId="me",
+        q=query,
+        labelIds=[label],
+        maxResults=max_emails,
+    ).execute()
+
+    messages = response.get("messages", [])
+    if not messages:
+        print(f"[gmail_history] No messages found matching query: {query!r}")
+        return []
+
+    print(f"[gmail_history] Found {len(messages)} message(s) in past {months}mo")
+
+    results: List[EmailPayload] = []
+    for msg_stub in messages:
+        msg_id = msg_stub["id"]
+        try:
+            raw_resp = service.users().messages().get(
+                userId="me", id=msg_id, format="raw"
+            ).execute()
+            raw_bytes = base64.urlsafe_b64decode(raw_resp.get("raw", "") + "==")
+        except Exception as e:
+            print(f"[gmail_history] Failed to fetch {msg_id}: {e}")
+            continue
+
+        msg_hash = hashlib.sha256(raw_bytes).hexdigest()
+        if msg_hash in existing_ids:
+            continue
+
+        payload = _message_to_payload(raw_bytes, broker_domains)
+        if payload is None:
+            continue
+
+        if broker_filter and (payload.broker or "").lower() != broker_filter.lower():
+            continue
+
+        results.append(payload)
+        print(f"[gmail_history] Queued: {payload.sender[:60]} ({payload.broker})")
+
+    print(f"[gmail_history] {len(results)} new broker email(s) ready for processing")
+    return results
+
+
 if __name__ == "__main__":
     import sys
     if "--setup" in sys.argv:

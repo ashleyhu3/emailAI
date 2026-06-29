@@ -200,6 +200,67 @@ async def trigger_ingest(req: IngestTriggerRequest):
     )
 
 
+# ── POST /ingest/scrape-ms-history ───────────────────────────────────────────
+
+@router.post("/scrape-ms-history")
+async def scrape_ms_history(months: int = 3, max_emails: int = 200):
+    """
+    Back-fill Morgan Stanley research from the past N months.
+
+    Searches all Gmail (read + unread) for MS emails after the cutoff date,
+    then runs each through the full ingest pipeline (including MS Matrix PDF
+    fallback).  Safe to call repeatedly — already-ingested emails are skipped.
+    """
+    try:
+        from ingest.worker import _process_email, _get_db
+        from ingest.gmail_fetcher import fetch_broker_emails_gmail_history
+        from sqlalchemy import text as sa_text
+
+        db = _get_db()
+        session = db.get_session()
+        try:
+            rows = session.execute(
+                sa_text("SELECT email_message_id FROM pdf_documents WHERE email_message_id IS NOT NULL")
+            ).fetchall()
+            existing_ids = {r[0] for r in rows}
+        finally:
+            session.close()
+        existing_ids |= db.get_rejected_message_ids()
+
+        loop = asyncio.get_event_loop()
+        emails = await loop.run_in_executor(
+            None,
+            lambda: fetch_broker_emails_gmail_history(
+                existing_ids=existing_ids,
+                months=months,
+                broker_filter="Morgan Stanley",
+                max_emails=max_emails,
+            ),
+        )
+
+        print(f"[scrape-ms-history] Processing {len(emails)} new MS email(s)")
+        results = []
+        for payload in emails:
+            try:
+                result = await loop.run_in_executor(None, _process_email, payload)
+                results.append(result)
+            except Exception as e:
+                results.append({"status": "error", "message": str(e)})
+
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+    return {
+        "months_searched": months,
+        "total_fetched": len(results),
+        "ingested": sum(1 for r in results if r.get("status") == "success"),
+        "skipped": sum(1 for r in results if r.get("status") == "skipped"),
+        "errors": sum(1 for r in results if r.get("status") == "error"),
+        "results": results,
+        "triggered_at": datetime.utcnow().isoformat(),
+    }
+
+
 # ── GET /ingest/status ────────────────────────────────────────────────────────
 
 @router.get("/status", response_model=IngestStatusResponse)

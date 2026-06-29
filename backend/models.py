@@ -77,6 +77,7 @@ class AskResponse(BaseModel):
     inferred_filters: Optional[Dict[str, Any]] = None
     query_type: str = "rag"
     is_enumeration: bool = False
+    chart_html: Optional[str] = None   # inline Plotly HTML for chart responses
 
 
 class BackfillResponse(BaseModel):

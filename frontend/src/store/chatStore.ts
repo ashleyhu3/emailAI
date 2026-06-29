@@ -16,8 +16,9 @@ export interface ChatMessage {
   chunks?: ChunkRef[];
   filterContext?: FilterContext;
   inferredFilters?: Record<string, unknown>;
-  queryType?: 'rag' | 'list_documents' | 'clarify';
+  queryType?: 'rag' | 'list_documents' | 'clarify' | 'chart';
   isEnumeration?: boolean;
+  chartHtml?: string;
 }
 
 export interface ChatSession {
