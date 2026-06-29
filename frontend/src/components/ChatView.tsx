@@ -1,7 +1,8 @@
 import { useEffect, useRef, useState } from 'react';
-import { askQuestion } from '../api/client';
+import { askQuestion, fetchDocumentContent } from '../api/client';
+import type { DocumentContent } from '../api/client';
 import { useChatStore } from '../store/chatStore';
-import type { HistoryMessage } from '../types';
+import type { ChunkRef, HistoryMessage } from '../types';
 import { extractCitations, stripCitations } from '../lib/citations';
 
 const HISTORY_WINDOW = 14;
@@ -32,6 +33,135 @@ function stripBold(text: string): string {
 function stripLeadingNumber(text: string): { text: string; hadNumber: boolean } {
   const m = text.match(/^\s*\d+\s*[).:\-]\s+/);
   return m ? { text: text.slice(m[0].length), hadNumber: true } : { text, hadNumber: false };
+}
+
+function uniqueByDocId(chunks: ChunkRef[]): ChunkRef[] {
+  const seen = new Set<number>();
+  return chunks.filter(c => {
+    if (seen.has(c.document_id)) return false;
+    seen.add(c.document_id);
+    return true;
+  });
+}
+
+function DocumentModal({ documentId, onClose }: { documentId: number; onClose: () => void }) {
+  const [doc, setDoc] = useState<DocumentContent | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    fetchDocumentContent(documentId)
+      .then(setDoc)
+      .catch(() => setError('Failed to load report.'))
+      .finally(() => setLoading(false));
+  }, [documentId]);
+
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose(); };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [onClose]);
+
+  const title = doc?.broker || doc?.sender_company || 'Report';
+  const date = doc?.written_date
+    ? new Date(doc.written_date).toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' })
+    : null;
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40" onClick={onClose}>
+      <div
+        className="bg-white rounded-2xl shadow-2xl w-full max-w-2xl max-h-[85vh] flex flex-col mx-4"
+        onClick={e => e.stopPropagation()}
+      >
+        {/* Header */}
+        <div className="flex items-start justify-between px-6 py-4 border-b border-gray-100 shrink-0">
+          <div>
+            <p className="font-semibold text-gray-900 text-base">{title}</p>
+            <div className="flex flex-wrap gap-2 mt-1">
+              {date && <span className="text-xs text-gray-500">{date}</span>}
+              {doc?.rating && <span className="text-xs px-2 py-0.5 rounded-full bg-blue-50 text-blue-700 border border-blue-100">{doc.rating}</span>}
+              {doc?.target_price != null && <span className="text-xs text-gray-500">TP {doc.target_price}</span>}
+              {doc?.tickers?.map(t => (
+                <span key={t} className="text-xs px-2 py-0.5 rounded-full bg-gray-100 text-gray-600">{t}</span>
+              ))}
+            </div>
+          </div>
+          <button onClick={onClose} className="text-gray-400 hover:text-gray-700 ml-4 shrink-0">
+            <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+            </svg>
+          </button>
+        </div>
+
+        {/* Body */}
+        <div className="flex-1 overflow-y-auto px-6 py-4">
+          {loading && <p className="text-sm text-gray-400">Loading…</p>}
+          {error && <p className="text-sm text-red-500">{error}</p>}
+          {doc && (
+            <div className="space-y-4">
+              {doc.dense_summary && (
+                <div className="text-sm text-gray-600 bg-gray-50 rounded-xl px-4 py-3 italic">
+                  {doc.dense_summary}
+                </div>
+              )}
+              {doc.pages.map((p, i) => (
+                <div key={i}>
+                  {p.page_number != null && (
+                    <p className="text-[10px] font-semibold text-gray-400 uppercase tracking-widest mb-1">
+                      Page {p.page_number}
+                    </p>
+                  )}
+                  <p className="text-sm text-gray-700 whitespace-pre-wrap leading-relaxed">{p.content}</p>
+                </div>
+              ))}
+              {doc.pages.length === 0 && !doc.dense_summary && (
+                <p className="text-sm text-gray-400">No content available for this report.</p>
+              )}
+            </div>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function SourcesSection({ chunks }: { chunks: ChunkRef[] }) {
+  const [openDocId, setOpenDocId] = useState<number | null>(null);
+  const unique = uniqueByDocId(chunks);
+  if (unique.length === 0) return null;
+
+  return (
+    <>
+      <div className="mt-3 pt-3 border-t border-gray-100">
+        <p className="text-[10px] font-semibold text-gray-400 uppercase tracking-widest mb-1.5">Sources</p>
+        <div className="flex flex-col gap-1">
+          {unique.map((c, i) => {
+            const meta = c.metadata as Record<string, string | null>;
+            const broker = meta.broker || meta.sender_company || 'Unknown';
+            const date = meta.written_date
+              ? new Date(meta.written_date).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })
+              : null;
+            return (
+              <button
+                key={i}
+                onClick={() => setOpenDocId(c.document_id)}
+                className="flex items-baseline gap-1.5 text-xs text-left hover:underline"
+              >
+                <span className="font-medium text-blue-600">{broker}</span>
+                {date && <span className="text-gray-400">· {date}</span>}
+                <svg className="w-3 h-3 text-gray-400 shrink-0 self-center" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14" />
+                </svg>
+              </button>
+            );
+          })}
+        </div>
+      </div>
+      {openDocId != null && (
+        <DocumentModal documentId={openDocId} onClose={() => setOpenDocId(null)} />
+      )}
+    </>
+  );
 }
 
 function renderAnswer(content: string, isEnumeration = false) {
@@ -214,6 +344,9 @@ export function ChatView() {
                     </div>
                     <div className={`text-sm text-gray-800 pt-0.5 ${msg.chartHtml ? 'flex-1 min-w-0' : ''}`}>
                       {renderAnswer(msg.content, msg.isEnumeration)}
+                      {msg.chunks && msg.chunks.length > 0 && (
+                        <SourcesSection chunks={msg.chunks} />
+                      )}
                       {msg.chartHtml && (
                         <div className="mt-3 rounded-xl border border-gray-200 overflow-hidden shadow-sm bg-white">
                           <iframe

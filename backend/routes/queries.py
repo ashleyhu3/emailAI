@@ -18,23 +18,42 @@ _MS_CHART_RE = re.compile(
     r"(?:report|research|coverage|note|idea|initiat|upgrade|downgrade|rating)",
     re.IGNORECASE,
 )
-_MONTHS_RE = re.compile(
-    r"(?:past|last)\s+(\d+)\s+months?|"
-    r"(\d+)\s+months?\s+(?:ago|back)|"
-    r"(?:past|last)\s+(one|two|three|six|twelve|1|2|3|6|12)\s+months?",
-    re.IGNORECASE,
-)
-_MONTH_WORDS = {"one": 1, "two": 2, "three": 3, "six": 6, "twelve": 12}
+_WORD_TO_NUM = {"one": 1, "two": 2, "three": 3, "six": 6, "twelve": 12}
 
 
-def _parse_months(question: str) -> int:
-    m = _MONTHS_RE.search(question)
+def _parse_days(question: str) -> int:
+    """Return the requested lookback window in days."""
+    q = question.lower()
+    # weeks
+    if re.search(r"(?:past|last|this)\s+week", q):
+        return 7
+    m = re.search(r"(?:past|last)\s+(\d+)\s+weeks?", q)
     if m:
-        raw = m.group(1) or m.group(2) or m.group(3) or "3"
-        return _MONTH_WORDS.get(raw.lower(), int(raw) if raw.isdigit() else 3)
-    if re.search(r"\bmonth\b", question, re.IGNORECASE):
-        return 1
-    return 3
+        return int(m.group(1)) * 7
+    # days
+    m = re.search(r"(?:past|last)\s+(\d+)\s+days?", q)
+    if m:
+        return int(m.group(1))
+    # months
+    m = re.search(r"(?:past|last)\s+(one|two|three|six|twelve|\d+)\s+months?", q)
+    if m:
+        raw = m.group(1)
+        n = _WORD_TO_NUM.get(raw, int(raw) if raw.isdigit() else 3)
+        return n * 30
+    if re.search(r"\bmonth\b", q):
+        return 30
+    return 90  # default 3 months
+
+
+def _days_to_label(days: int) -> str:
+    if days <= 7:
+        return "past week"
+    if days <= 14:
+        return "past 2 weeks"
+    if days % 30 == 0:
+        n = days // 30
+        return f"past {n} month{'s' if n != 1 else ''}"
+    return f"past {days} days"
 
 
 @router.post("/ask", response_model=AskResponse)
@@ -44,19 +63,19 @@ async def ask_question(
 ):
     # Chart shortcut — detect "show me MS reports" style queries
     if _MS_CHART_RE.search(req.question):
-        months = _parse_months(req.question)
+        days = _parse_days(req.question)
         try:
             from charts_util import generate_ms_research_chart
             chart_html, n_companies = await run_in_threadpool(
-                generate_ms_research_chart, months
+                generate_ms_research_chart, days
             )
-            months_label = f"{months} month" + ("s" if months != 1 else "")
+            time_label = _days_to_label(days)
             if n_companies == 0:
-                answer = f"No Morgan Stanley research found for the past {months_label}. Try running an ingest first."
+                answer = f"No Morgan Stanley research found for the {time_label}. Try running an ingest first."
                 chart_html = None
             else:
                 answer = (
-                    f"Here is the Morgan Stanley research risk-reward chart for the past {months_label} "
+                    f"Here is the Morgan Stanley research risk-reward chart for the {time_label} "
                     f"({n_companies} compan{'ies' if n_companies != 1 else 'y'})."
                 )
             return AskResponse(

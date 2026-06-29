@@ -8,11 +8,11 @@ router = APIRouter()
 
 
 @router.get("/ms-reports", response_class=HTMLResponse)
-def ms_research_chart(months: int = Query(default=3, ge=1, le=24)):
+def ms_research_chart(days: int = Query(default=90, ge=1, le=730)):
     """
     Generate an interactive risk-reward chart for all Morgan Stanley research
-    in the past `months` months.  Returns a self-contained HTML page.
+    in the past `days` days.  Returns a self-contained HTML page.
     """
     from charts_util import generate_ms_research_chart
-    html, _ = generate_ms_research_chart(months=months)
+    html, _ = generate_ms_research_chart(days=days)
     return HTMLResponse(content=html)

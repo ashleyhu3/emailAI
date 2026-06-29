@@ -89,15 +89,14 @@ def resolve_ticker(company_name: str, existing_tickers: Optional[list] = None) -
 
 # ── DB query ──────────────────────────────────────────────────────────────────
 
-def _query_ms_docs(months: int) -> List[dict]:
-    """Return MS research docs from the past N months from the DB."""
+def _query_ms_docs(days: int) -> List[dict]:
+    """Return MS research docs from the past N days from the DB."""
     import psycopg
     db_url = os.environ.get("PDF_SUMMARIZER_DB_URL", "")
-    # Convert SQLAlchemy URL to psycopg-compatible URL
     conn_str = db_url.replace("postgresql+psycopg://", "postgresql://").replace(
         "postgresql+psycopg2://", "postgresql://"
     )
-    cutoff = date.today() - timedelta(days=months * 30)
+    cutoff = date.today() - timedelta(days=days)
     with psycopg.connect(conn_str) as conn:
         rows = conn.execute(
             """
@@ -126,17 +125,19 @@ _ACTION_COLOR = {
 _ACTION_LABEL = {"u": "U", "d": "D", "id": "ID", "m": "M"}
 
 
-def generate_ms_research_chart(months: int = 3) -> Tuple[str, int]:
+def generate_ms_research_chart(days: int = 90) -> Tuple[str, int]:
     """
     Build an interactive Plotly risk-reward chart for all Morgan Stanley research
-    in the past `months` months.  Returns (html_string, company_count).
+    in the past `days` days.  Returns (html_string, company_count).
+    Price and volume are on independent axes: volume on the left, price on the right.
     """
     import pandas as pd
     import plotly.graph_objects as go
     from plotly.subplots import make_subplots
     import yfinance as yf
+    from datetime import datetime, timezone
 
-    docs = _query_ms_docs(months)
+    docs = _query_ms_docs(days)
     if not docs:
         return "<p style='font-family:sans-serif;color:#6b7280'>No Morgan Stanley research found for this period.</p>", 0
 
@@ -160,28 +161,63 @@ def generate_ms_research_chart(months: int = 3) -> Tuple[str, int]:
         return "<p style='font-family:sans-serif;color:#6b7280'>Could not resolve tickers for any Morgan Stanley research in this period.</p>", 0
 
     n = len(companies)
-    row_heights = [250] * n
+
+    # Each subplot row gets a secondary y-axis: left=volume, right=price
     fig = make_subplots(
         rows=n, cols=1,
+        specs=[[{"secondary_y": True}]] * n,
         subplot_titles=[f"{c} ({ticker_for[c]})" for c in companies],
-        vertical_spacing=0.08,
-        row_heights=row_heights,
+        vertical_spacing=max(0.04, 0.12 / n),
+        row_heights=[280] * n,
     )
 
-    period_str = f"{months}mo"
+    end_dt = datetime.now()
+    start_dt = end_dt - timedelta(days=days)
     sidebar_rows: List[dict] = []
 
     for row_idx, (company, reports) in enumerate(companies.items(), start=1):
         ticker = ticker_for[company]
         try:
-            hist = yf.Ticker(ticker).history(period=period_str)
+            hist = yf.Ticker(ticker).history(start=start_dt, end=end_dt)
         except Exception:
             hist = pd.DataFrame()
 
         if hist.empty:
             continue
 
-        # Stock price line
+        vol_max = float(hist["Volume"].max()) or 1.0
+        p_min = float(hist["Close"].min())
+        p_max = float(hist["Close"].max())
+        p_margin = max((p_max - p_min) * 0.15, p_max * 0.05)
+
+        # ── Volume bars (left / primary axis) ────────────────────────────────
+        fig.add_trace(
+            go.Bar(
+                x=hist.index,
+                y=hist["Volume"],
+                marker_color="rgba(148,163,184,0.25)",
+                name="Volume",
+                showlegend=False,
+                hovertemplate="%{x|%b %d}<br>Vol %{y:,.0f}<extra></extra>",
+            ),
+            row=row_idx, col=1,
+            secondary_y=False,
+        )
+        # Scale volume axis so bars occupy only the bottom ~30% of the panel
+        fig.update_yaxes(
+            range=[0, vol_max * 3.5],
+            tickformat=".2s",
+            secondary_y=False,
+            row=row_idx, col=1,
+            showgrid=False,
+            zeroline=False,
+            tickfont=dict(color="#94a3b8", size=9),
+            title_text="VOL",
+            title_font=dict(color="#94a3b8", size=9),
+            title_standoff=4,
+        )
+
+        # ── Price line (right / secondary axis) ───────────────────────────────
         fig.add_trace(
             go.Scatter(
                 x=hist.index,
@@ -190,25 +226,22 @@ def generate_ms_research_chart(months: int = 3) -> Tuple[str, int]:
                 line=dict(color="#2563eb", width=1.5),
                 name=ticker,
                 showlegend=False,
-                hovertemplate="%{x|%b %d}<br>$%{y:.2f}<extra></extra>",
+                hovertemplate="%{x|%b %d}<br>%{y:.2f}<extra></extra>",
             ),
             row=row_idx, col=1,
+            secondary_y=True,
         )
-
-        # Volume (secondary y — lighter bar)
-        fig.add_trace(
-            go.Bar(
-                x=hist.index,
-                y=hist["Volume"],
-                marker_color="rgba(148,163,184,0.25)",
-                name="Volume",
-                showlegend=False,
-                yaxis=f"y{row_idx*2}",
-                hovertemplate="%{x|%b %d}<br>Vol %{y:,.0f}<extra></extra>",
-            ),
+        fig.update_yaxes(
+            range=[max(0, p_min - p_margin), p_max + p_margin * 2],
+            secondary_y=True,
             row=row_idx, col=1,
+            showgrid=True,
+            gridcolor="#f1f5f9",
+            zeroline=False,
+            tickfont=dict(size=9),
         )
 
+        # ── Research event markers (on price axis) ────────────────────────────
         for doc in reports:
             event_date = doc["written_date"]
             if not event_date:
@@ -217,21 +250,18 @@ def generate_ms_research_chart(months: int = 3) -> Tuple[str, int]:
             color = _ACTION_COLOR.get(action, "#94a3b8")
             label = _ACTION_LABEL.get(action, "?")
 
-            # Find closest trading-day price (yfinance returns tz-aware index)
             ts = pd.Timestamp(event_date)
             if hist.index.tz is not None:
                 ts = ts.tz_localize(hist.index.tz)
-            idx = hist.index.searchsorted(ts)
-            if idx >= len(hist):
-                idx = len(hist) - 1
+            idx = int(hist.index.searchsorted(ts))
+            idx = min(idx, len(hist) - 1)
             price_at_event = float(hist["Close"].iloc[idx])
 
             hover = (
                 f"<b>{label} — {doc['rating'] or 'N/A'}</b><br>"
                 f"Date: {event_date}<br>"
-                + (f"PT: ${doc['target_price']:.0f}" if doc["target_price"] else "")
+                + (f"PT: {doc['target_price']:.0f}" if doc["target_price"] else "")
             )
-            # Event marker
             fig.add_trace(
                 go.Scatter(
                     x=[event_date],
@@ -246,9 +276,9 @@ def generate_ms_research_chart(months: int = 3) -> Tuple[str, int]:
                     hovertemplate=hover + "<extra></extra>",
                 ),
                 row=row_idx, col=1,
+                secondary_y=True,
             )
 
-            # Price target diamond
             if doc["target_price"]:
                 fig.add_trace(
                     go.Scatter(
@@ -258,9 +288,10 @@ def generate_ms_research_chart(months: int = 3) -> Tuple[str, int]:
                         marker=dict(size=10, color="#1e3a5f", symbol="diamond",
                                     line=dict(width=1, color="white")),
                         showlegend=False,
-                        hovertemplate=f"Price Target: ${doc['target_price']:.0f}<extra></extra>",
+                        hovertemplate=f"Price Target: {doc['target_price']:.0f}<extra></extra>",
                     ),
                     row=row_idx, col=1,
+                    secondary_y=True,
                 )
 
             sidebar_rows.append({
@@ -272,27 +303,35 @@ def generate_ms_research_chart(months: int = 3) -> Tuple[str, int]:
                 "color": color,
             })
 
-    total_height = max(420, n * 300)
+    total_height = max(420, n * 320)
     fig.update_layout(
         height=total_height,
         template="plotly_white",
-        margin=dict(l=50, r=10, t=50, b=30),
+        margin=dict(l=55, r=55, t=50, b=30),
         font=dict(family="Inter, system-ui, sans-serif", size=11),
         hovermode="x unified",
         paper_bgcolor="white",
         plot_bgcolor="white",
+        bargap=0.1,
     )
     fig.update_xaxes(showgrid=False, zeroline=False)
-    fig.update_yaxes(showgrid=True, gridcolor="#f1f5f9", zeroline=False)
 
     chart_html = fig.to_html(include_plotlyjs="cdn", full_html=False,
                               config={"displayModeBar": False})
 
-    # Build sidebar HTML
     sidebar_html = _build_sidebar(sidebar_rows)
-    months_label = f"{months} month" + ("s" if months != 1 else "")
 
-    return _wrap_chart(chart_html, sidebar_html, months_label, n), n
+    if days <= 7:
+        time_label = "past week"
+    elif days <= 14:
+        time_label = "past 2 weeks"
+    elif days % 30 == 0:
+        nm = days // 30
+        time_label = f"past {nm} month{'s' if nm != 1 else ''}"
+    else:
+        time_label = f"past {days} days"
+
+    return _wrap_chart(chart_html, sidebar_html, time_label, n), n
 
 
 def _build_sidebar(rows: List[dict]) -> str:
@@ -316,7 +355,7 @@ def _build_sidebar(rows: List[dict]) -> str:
     return "\n".join(items)
 
 
-def _wrap_chart(chart_html: str, sidebar_html: str, months_label: str, n_companies: int) -> str:
+def _wrap_chart(chart_html: str, sidebar_html: str, time_label: str, n_companies: int) -> str:
     return f"""<!DOCTYPE html>
 <html>
 <head>
@@ -341,7 +380,7 @@ def _wrap_chart(chart_html: str, sidebar_html: str, months_label: str, n_compani
 <body>
 <div class="container">
   <div class="chart-area">
-    <div class="header">Morgan Stanley Research · Past {months_label} · {n_companies} compan{"ies" if n_companies!=1 else "y"}</div>
+    <div class="header">Morgan Stanley Research · {time_label.title()} · {n_companies} compan{"ies" if n_companies!=1 else "y"}</div>
     <div class="legend">
       <div class="legend-item"><div class="legend-dot" style="background:#3b82f6"></div>Initiation (ID)</div>
       <div class="legend-item"><div class="legend-dot" style="background:#22c55e"></div>Upgrade (U)</div>

@@ -275,14 +275,22 @@ def fetch_broker_emails_gmail_history(
             from_clause = " OR ".join(f"from:{d}" for d in matching_domains)
             query = f"({from_clause}) after:{after_str}"
 
-    response = service.users().messages().list(
-        userId="me",
-        q=query,
-        labelIds=[label],
-        maxResults=max_emails,
-    ).execute()
+    # Paginate through all results — Gmail caps each page at 500 and issues a
+    # nextPageToken when there are more. Without pagination we silently miss emails
+    # beyond the first page. Search all mail (no labelIds) so archived emails are included.
+    messages = []
+    page_token = None
+    while True:
+        kwargs = dict(userId="me", q=query, maxResults=min(500, max_emails - len(messages)))
+        if page_token:
+            kwargs["pageToken"] = page_token
+        response = service.users().messages().list(**kwargs).execute()
+        page = response.get("messages", [])
+        messages.extend(page)
+        page_token = response.get("nextPageToken")
+        if not page_token or len(messages) >= max_emails:
+            break
 
-    messages = response.get("messages", [])
     if not messages:
         print(f"[gmail_history] No messages found matching query: {query!r}")
         return []

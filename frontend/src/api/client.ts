@@ -15,3 +15,21 @@ http.interceptors.response.use(
 
 export const askQuestion = (req: AskRequest): Promise<AskResponse> =>
   http.post('/queries/ask', req).then(r => r.data);
+
+export const fetchDocumentContent = (documentId: number): Promise<DocumentContent> =>
+  http.get(`/documents/${documentId}/content`).then(r => r.data);
+
+export interface DocumentContent {
+  id: number;
+  filename: string;
+  broker: string | null;
+  sender_company: string | null;
+  written_date: string | null;
+  rating: string | null;
+  target_price: number | null;
+  tickers: string[] | null;
+  sector: string | null;
+  report_type: string | null;
+  dense_summary: string | null;
+  pages: { page_number: number | null; content: string }[];
+}

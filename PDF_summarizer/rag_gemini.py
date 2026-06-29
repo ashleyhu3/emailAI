@@ -1018,6 +1018,24 @@ Return ONLY a valid JSON object. No markdown, no explanation."""
             out.extend(block[1:])
         return "\n".join(out)
 
+    @staticmethod
+    def _chunk_ref_dict(c: PDFChunk) -> dict:
+        doc = c.document
+        doc_meta: dict = {}
+        if doc:
+            doc_meta = {
+                "filename": doc.filename,
+                "broker": doc.broker,
+                "written_date": doc.written_date.isoformat() if doc.written_date else None,
+                "sender_company": doc.sender_company,
+            }
+        return {
+            "chunk_id": str(c.id),
+            "document_id": c.document_id,
+            "page_number": c.page_number,
+            "metadata": {**(c.metadata_ or {}), **doc_meta},
+        }
+
     def _select_cited_chunks(
         self, answer: str, chunks: List[PDFChunk]
     ) -> List[PDFChunk]:
@@ -1482,7 +1500,7 @@ Return ONLY a valid JSON object. No markdown, no explanation."""
         print(f"[comparison] synthesized across {len(subjects)} subjects, {len(all_chunks)} total chunks")
         return {
             "answer": consolidated,
-            "chunks_used": self._select_cited_chunks(consolidated, all_chunks),
+            "chunks_used": [self._chunk_ref_dict(c) for c in self._select_cited_chunks(consolidated, all_chunks)],
             "inferred_filters": analysis.get("hard_filters") or {},
             "query_type": "comparison",
             "is_enumeration": False,
@@ -1783,15 +1801,7 @@ Return ONLY a valid JSON object. No markdown, no explanation."""
 
         return {
             "answer": answer,
-            "chunks_used": [
-                {
-                    "chunk_id": str(c.id),
-                    "document_id": c.document_id,
-                    "page_number": c.page_number,
-                    "metadata": c.metadata_ or {},
-                }
-                for c in cited_chunks
-            ],
+            "chunks_used": [self._chunk_ref_dict(c) for c in cited_chunks],
             "inferred_filters": analysis.get("hard_filters") or {},
             "query_type": response_track if response_track != "deep_dive" else "rag",
             "is_enumeration": is_enumeration,
