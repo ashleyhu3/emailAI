@@ -126,9 +126,24 @@ function DocumentModal({ documentId, onClose }: { documentId: number; onClose: (
 }
 
 function SourcesSection({ chunks }: { chunks: ChunkRef[] }) {
-  const [openDocId, setOpenDocId] = useState<number | null>(null);
+  const [fallbackDocId, setFallbackDocId] = useState<number | null>(null);
   const unique = uniqueByDocId(chunks);
   if (unique.length === 0) return null;
+
+  async function handleSourceClick(docId: number) {
+    // Try to open the rendered HTML; fall back to the content modal if no HTML stored
+    const url = `/api/documents/${docId}/html`;
+    try {
+      const res = await fetch(url, { method: 'HEAD' });
+      if (res.ok) {
+        window.open(url, '_blank', 'noopener');
+      } else {
+        setFallbackDocId(docId);
+      }
+    } catch {
+      setFallbackDocId(docId);
+    }
+  }
 
   return (
     <>
@@ -144,10 +159,10 @@ function SourcesSection({ chunks }: { chunks: ChunkRef[] }) {
             return (
               <button
                 key={i}
-                onClick={() => setOpenDocId(c.document_id)}
-                className="flex items-baseline gap-1.5 text-xs text-left hover:underline"
+                onClick={() => handleSourceClick(c.document_id)}
+                className="flex items-baseline gap-1.5 text-xs text-left group w-fit"
               >
-                <span className="font-medium text-blue-600">{broker}</span>
+                <span className="font-medium text-blue-600 group-hover:underline">{broker}</span>
                 {date && <span className="text-gray-400">· {date}</span>}
                 <svg className="w-3 h-3 text-gray-400 shrink-0 self-center" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14" />
@@ -157,8 +172,8 @@ function SourcesSection({ chunks }: { chunks: ChunkRef[] }) {
           })}
         </div>
       </div>
-      {openDocId != null && (
-        <DocumentModal documentId={openDocId} onClose={() => setOpenDocId(null)} />
+      {fallbackDocId != null && (
+        <DocumentModal documentId={fallbackDocId} onClose={() => setFallbackDocId(null)} />
       )}
     </>
   );

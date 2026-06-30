@@ -4,8 +4,10 @@ import tempfile
 from typing import List, Optional
 from datetime import date
 
+import re as _re
 from fastapi import APIRouter, Depends, HTTPException, UploadFile, File
 from fastapi.concurrency import run_in_threadpool
+from fastapi.responses import HTMLResponse as _HTMLResponse
 from pydantic import BaseModel
 
 from dependencies import get_db, get_pipeline, get_rag
@@ -78,6 +80,57 @@ async def upload_document(
     finally:
         if os.path.exists(named_path):
             os.remove(named_path)
+
+
+@router.get("/{document_id}/html", response_class=_HTMLResponse)
+def get_document_html(
+    document_id: int,
+    db: DatabaseManager = Depends(get_db),
+):
+    """Serve the raw HTML body of an email-ingested report, sanitized for browser display."""
+    session = db.get_session()
+    try:
+        doc = session.get(PDFDocument, document_id)
+        if not doc:
+            raise HTTPException(status_code=404, detail=f"Document {document_id} not found")
+        if not doc.html_body:
+            raise HTTPException(status_code=404, detail="No HTML content stored for this document (it may have been ingested before this feature was added, or it was a PDF-only upload).")
+
+        html = doc.html_body
+
+        # Strip script/object/embed tags to prevent XSS
+        html = _re.sub(r"<script[\s\S]*?</script>", "", html, flags=_re.IGNORECASE)
+        html = _re.sub(r"<(object|embed|iframe|applet)[^>]*>[\s\S]*?</\1>", "", html, flags=_re.IGNORECASE)
+        html = _re.sub(r"\bon\w+\s*=\s*[\"'][^\"']*[\"']", "", html, flags=_re.IGNORECASE)
+
+        broker = doc.broker or doc.sender_company or "Unknown"
+        date_str = doc.written_date.strftime("%-d %B %Y") if doc.written_date else ""
+
+        wrapped = f"""<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>{broker} — {date_str}</title>
+<style>
+  body {{ font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+          max-width: 900px; margin: 0 auto; padding: 0; }}
+  .report-banner {{ background:#111827; color:#fff; padding:10px 20px;
+                    font-size:12px; display:flex; gap:16px; align-items:center; }}
+  .report-banner b {{ font-size:14px; }}
+</style>
+</head>
+<body>
+<div class="report-banner">
+  <div><b>{broker}</b>{f" · {date_str}" if date_str else ""}{f" · {doc.rating}" if doc.rating else ""}</div>
+</div>
+{html}
+</body>
+</html>"""
+
+        return _HTMLResponse(content=wrapped, headers={"X-Frame-Options": "SAMEORIGIN"})
+    finally:
+        session.close()
 
 
 @router.get("/{document_id}/content", response_model=DocumentContent)

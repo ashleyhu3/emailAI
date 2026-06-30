@@ -287,6 +287,18 @@ def _process_email(payload: EmailPayload) -> dict:
     # ── 0. Early dedup: skip before any work ─────────────────────────────────
     existing = db.get_document_by_email_id(payload.message_id)
     if existing:
+        # Backfill html_body for docs ingested before this field was added
+        if existing.html_body is None and payload.html_body:
+            session = db.get_session()
+            try:
+                doc_row = session.get(type(existing), existing.id)
+                if doc_row is not None:
+                    doc_row.html_body = payload.html_body
+                    session.commit()
+            except Exception:
+                session.rollback()
+            finally:
+                session.close()
         return {"status": "skipped", "reason": "duplicate", "message_id": payload.message_id}
 
     sender_email = _extract_sender_email(payload.sender)
@@ -469,6 +481,8 @@ def _process_email(payload: EmailPayload) -> dict:
             sent_date=sent_date,
             written_date=metadata.report_date,
             tickers=metadata.tickers or [],
+            email_type=metadata.email_type,
+            report_type=metadata.report_subtype,
             broker=metadata.broker,
             broker_action=metadata.broker_action,
             rating=metadata.rating,
@@ -477,6 +491,7 @@ def _process_email(payload: EmailPayload) -> dict:
             dense_summary=metadata.dense_summary,
             email_message_id=payload.message_id,
             ingest_source="email",
+            html_body=payload.html_body,
         )
     except Exception as e:
         if "unique" in str(e).lower():

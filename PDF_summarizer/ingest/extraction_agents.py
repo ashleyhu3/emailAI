@@ -24,8 +24,8 @@ if str(_PDF_SUMMARIZER) not in sys.path:
 
 from broker_cache import BrokerContextCache
 
-_FLASH = "models/gemini-2.5-flash"
-_PRO   = "models/gemini-2.5-pro"
+_FLASH   = "models/gemini-3.5-flash"           # primary extraction (upgraded from 2.5-flash)
+_PRO     = "models/gemini-3.1-pro-preview"   # QA fallback (Agent 3) — thinking mode required
 
 
 def _client(api_key: Optional[str] = None) -> genai.Client:
@@ -54,6 +54,24 @@ class FinancialReportMetadata(BaseModel):
     tickers: Optional[List[str]] = Field(None, description="List of ticker symbols mentioned (e.g. ['AAPL', '2330.TW', '00700.HK']). Null for macro/strategy reports with no specific stock coverage.")
     eps_pe: Optional[EpsPeData] = None
     dense_summary: str
+    email_type: Literal["sales", "analyst"] = Field(
+        "analyst",
+        description=(
+            "sales = digest/round-up covering many companies or multiple reports in one email "
+            "(e.g. morning notes, weekly wrap, sector digests, top-ideas lists). "
+            "analyst = single focused report on one company/ticker/theme."
+        ),
+    )
+    report_subtype: Optional[Literal["formal_report", "model_update", "earnings", "brief"]] = Field(
+        None,
+        description=(
+            "Only set when email_type=analyst. "
+            "formal_report = full initiation or comprehensive coverage note. "
+            "model_update = primarily a financial model revision (EPS/TP change with brief commentary). "
+            "earnings = any earnings-related note (preview, preview/review, or post-results analysis). "
+            "brief = short commentary, color piece, or quick take (usually <1 page)."
+        ),
+    )
 
     @field_validator("broker_action", mode="before")
     @classmethod
@@ -99,11 +117,15 @@ def run_agent1(image_bytes: bytes, context_text: str = "", api_key: Optional[str
             system_instruction=_AGENT1_SYSTEM,
             thinking_config=types.ThinkingConfig(thinking_budget=0),
         ),
+        request_options=types.RequestOptions(timeout=_API_TIMEOUT),
     )
     return (response.text or "[NO_DATA]").strip()
 
 
 # ── Agent 2: Core Financial Matrix Extractor ──────────────────────────────────
+
+_API_TIMEOUT = 90  # seconds — prevents hung Gemini connections from stalling ingest
+
 
 def _run_agent2_raw(
     aoim_text: str,
@@ -129,20 +151,31 @@ def _run_agent2_raw(
             thinking_config=types.ThinkingConfig(thinking_budget=0),
         )
     prompt = (
-        "Extract metadata from this broker report. "
-        "The report may be in English, Mandarin, Cantonese, Traditional Chinese, or Simplified Chinese — "
-        "extract fields regardless of language. "
-        "Chinese rating terms: 买入/增持=Overweight, 中性/持有=Equal-weight, 减持/卖出=Underweight. "
-        "Chinese action terms: 上调/升级=upgrade(u), 下调/降级=downgrade(d), 首次覆盖=initiation(id), 维持/重申=maintain(m). "
-        "tickers: list all stock/bond ticker symbols explicitly mentioned (e.g. '2330.TW', 'AAPL', '600519.SS'); null for macro/strategy reports with no specific security coverage. "
-        "dense_summary: write 2-4 coherent English sentences describing the report's thesis, key findings, and outlook. "
-        "Do NOT produce a keyword list — write prose sentences.\n\n"
+        "Extract metadata from this broker research email. "
+        "The content may be in English, Mandarin, Cantonese, Traditional Chinese, or Simplified Chinese — "
+        "extract all fields regardless of language.\n\n"
+        "FIELD INSTRUCTIONS:\n"
+        "• broker_action: u=upgrade, d=downgrade, id=initiation, m=maintain/reiterate.\n"
+        "• rating: Overweight/Equal-weight/Underweight only. "
+        "Chinese: 买入/增持=Overweight, 中性/持有=Equal-weight, 减持/卖出=Underweight.\n"
+        "• tickers: list every stock/bond ticker symbol explicitly mentioned; null only for pure macro with zero security coverage.\n"
+        "• dense_summary: 2–4 coherent English prose sentences — thesis, key findings, outlook. No bullet lists.\n"
+        "• email_type: 'sales' if this is a digest/round-up covering many companies or topics in one email "
+        "(morning notes, weekly wrap, top-ideas, sector digests). "
+        "'analyst' if it is a focused note on one company/ticker.\n"
+        "• report_subtype (analyst emails only): "
+        "'formal_report'=full initiation or comprehensive coverage note, "
+        "'model_update'=mainly EPS/TP revision with brief commentary, "
+        "'earnings'=any earnings-related note (pre-results, post-results, or both), "
+        "'brief'=short color or quick take (<1 page equivalent). "
+        "Set null for sales emails.\n\n"
         f"{aoim_text}"
     )
     response = c.models.generate_content(
-        model=_FLASH,
+        model=_PRO,
         contents=prompt,
         config=config,
+        request_options=types.RequestOptions(timeout=_API_TIMEOUT),
     )
     return response.text or ""
 
@@ -184,6 +217,7 @@ def _run_agent2_repair(
             response_schema=FinancialReportMetadata,
             thinking_config=types.ThinkingConfig(thinking_budget=0),
         ),
+        request_options=types.RequestOptions(timeout=_API_TIMEOUT),
     )
     return FinancialReportMetadata.model_validate_json(response.text)
 
@@ -239,7 +273,9 @@ def run_agent3(
             system_instruction=_AGENT3_SYSTEM,
             response_mime_type="application/json",
             response_schema=FinancialReportMetadata,
+            thinking_config=types.ThinkingConfig(thinking_budget=1024),
         ),
+        request_options=types.RequestOptions(timeout=_API_TIMEOUT),
     )
     return FinancialReportMetadata.model_validate_json(response.text)
 

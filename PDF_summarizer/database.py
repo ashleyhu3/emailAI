@@ -72,7 +72,8 @@ class PDFDocument(Base):
 
     # Extended metadata — extracted by Gemini during ingestion
     tickers = Column(JSONB, nullable=True)               # ["BTC", "AAPL"]
-    report_type = Column(String(100), nullable=True)     # "equity_research" | "technical_analysis" | …
+    email_type = Column(String(20), nullable=True)       # "sales" | "analyst"
+    report_type = Column(String(100), nullable=True)     # "formal_report" | "model_update" | "earnings_preview" | "earnings_review" | "brief"
     sector = Column(String(200), nullable=True)          # GICS sector, e.g. "Technology"
     asset_class = Column(String(100), nullable=True)     # "equity" | "crypto" | "fixed_income" | …
     coverage_period_from = Column(Date, nullable=True)   # Start of the period being analysed
@@ -89,6 +90,7 @@ class PDFDocument(Base):
     # ── Email ingest provenance ───────────────────────────────────────────────
     email_message_id = Column(String(500), nullable=True, unique=True)  # SHA-256 of email body+attachments
     ingest_source = Column(String(50), nullable=True, default="upload") # 'email' | 'upload'
+    html_body = Column(Text, nullable=True)  # Raw HTML of the email body for in-app viewing
 
     uploaded_at = Column(DateTime, default=datetime.utcnow, nullable=False)
     processed_at = Column(DateTime, nullable=True)
@@ -185,6 +187,7 @@ class DatabaseManager:
                 conn.execute(text("ALTER TABLE pdf_documents ADD COLUMN IF NOT EXISTS sent_date DATE"))
                 conn.execute(text("ALTER TABLE pdf_documents ADD COLUMN IF NOT EXISTS written_date DATE"))
                 conn.execute(text("ALTER TABLE pdf_documents ADD COLUMN IF NOT EXISTS tickers JSONB"))
+                conn.execute(text("ALTER TABLE pdf_documents ADD COLUMN IF NOT EXISTS email_type VARCHAR(20)"))
                 conn.execute(text("ALTER TABLE pdf_documents ADD COLUMN IF NOT EXISTS report_type VARCHAR(100)"))
                 conn.execute(text("ALTER TABLE pdf_documents ADD COLUMN IF NOT EXISTS sector VARCHAR(200)"))
                 conn.execute(text("ALTER TABLE pdf_documents ADD COLUMN IF NOT EXISTS asset_class VARCHAR(100)"))
@@ -198,6 +201,7 @@ class DatabaseManager:
                 conn.execute(text("ALTER TABLE pdf_documents ADD COLUMN IF NOT EXISTS eps_pe JSONB"))
                 conn.execute(text("ALTER TABLE pdf_documents ADD COLUMN IF NOT EXISTS dense_summary TEXT"))
                 conn.execute(text("ALTER TABLE pdf_documents ADD COLUMN IF NOT EXISTS email_message_id VARCHAR(500)"))
+                conn.execute(text("ALTER TABLE pdf_documents ADD COLUMN IF NOT EXISTS html_body TEXT"))
                 conn.execute(text("ALTER TABLE pdf_documents ADD COLUMN IF NOT EXISTS ingest_source VARCHAR(50) DEFAULT 'upload'"))
                 # Triage learning log
                 conn.execute(text("""
@@ -289,6 +293,7 @@ class DatabaseManager:
         sent_date=None,
         written_date=None,
         tickers=None,
+        email_type: Optional[str] = None,
         report_type: Optional[str] = None,
         sector: Optional[str] = None,
         asset_class: Optional[str] = None,
@@ -302,6 +307,7 @@ class DatabaseManager:
         dense_summary: Optional[str] = None,
         email_message_id: Optional[str] = None,
         ingest_source: Optional[str] = "upload",
+        html_body: Optional[str] = None,
     ) -> PDFDocument:
         session = self.get_session()
         try:
@@ -316,6 +322,7 @@ class DatabaseManager:
                 sent_date=sent_date,
                 written_date=written_date,
                 tickers=tickers,
+                email_type=email_type,
                 report_type=report_type,
                 sector=sector,
                 asset_class=asset_class,
@@ -329,6 +336,7 @@ class DatabaseManager:
                 dense_summary=dense_summary,
                 email_message_id=email_message_id,
                 ingest_source=ingest_source,
+                html_body=html_body,
             )
             session.add(doc)
             session.commit()

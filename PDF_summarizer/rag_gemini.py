@@ -29,6 +29,7 @@ from reranker import get_reranker
 from user_memory import get_user_memory
 
 GENERATION_MODEL = "models/gemini-3.5-flash"
+ANALYSIS_MODEL   = "models/gemini-3.1-pro-preview"   # used only for query analysis / routing
 HISTORY_WINDOW = 14
 
 load_dotenv()
@@ -352,14 +353,14 @@ class GeminiRAGPipeline:
 
     # Matches an in-text citation like "(report.pdf, p.3)", "(report.pdf, pages 9, 11)", or
     # document-level "(report.pdf)" with no page. The filename may contain one level of nested
-    # parens (e.g. "91APP (6741).pdf"); requiring ".pdf" keeps prose parens like "(see below)"
-    # from matching. The page spec is optional so document-level citations parse too.
+    # parens (e.g. "91APP (6741).pdf"); requiring a known extension keeps prose parens like
+    # "(see below)" from matching. The page spec is optional so document-level citations parse too.
     _CITATION_BODY = (
-        r"\((?:[^()]|\([^()]*\))*?\.pdf(?:[\s,]+(?:pp?\.?|pages?)?\s*\d[\d,\s\-–]*)?\)"
+        r"\((?:[^()]|\([^()]*\))*?\.(?:pdf|eml)(?:[\s,]+(?:pp?\.?|pages?)?\s*\d[\d,\s\-–]*)?\)"
     )
     # Capturing version: group 1 = filename, group 2 = page spec (optional; None if absent).
     _CITATION_RE = re.compile(
-        r"\(((?:[^()]|\([^()]*\))*?\.pdf)"
+        r"\(((?:[^()]|\([^()]*\))*?\.(?:pdf|eml))"
         r"(?:[\s,]+((?:pp?\.?|pages?)?\s*\d[\d,\s\-–]*))?\)",
         re.IGNORECASE,
     )
@@ -542,7 +543,7 @@ Return ONLY a valid JSON object. No markdown, no explanation."""
 
         try:
             response = self.client.models.generate_content(
-                model=GENERATION_MODEL,
+                model=ANALYSIS_MODEL,
                 contents=prompt,
                 config={"temperature": 0, "response_mime_type": "application/json"},
             )
@@ -928,8 +929,9 @@ Return ONLY a valid JSON object. No markdown, no explanation."""
 
         # Tidy separators left by any stripped citations.
         cleaned = re.sub(r",\s*,", ", ", cleaned)
-        cleaned = re.sub(r"(Sources:)\s*,\s*", r"\1 ", cleaned, flags=re.IGNORECASE)
-        cleaned = re.sub(r"Sources:\s*(?=\n|$)", "", cleaned, flags=re.IGNORECASE)
+        cleaned = re.sub(r"(Sources?:)\s*,\s*", r"\1 ", cleaned, flags=re.IGNORECASE)
+        # Remove empty "Source:" / "Sources:" lines left when all citations were stripped
+        cleaned = re.sub(r"\n[ \t]*Sources?:\s*(?=\n|$)", "", cleaned, flags=re.IGNORECASE)
 
         print(
             f"[CITATION CHECK] page-level={stats['page']} doc-level={stats['doc_level']} "
@@ -1122,6 +1124,61 @@ Return ONLY a valid JSON object. No markdown, no explanation."""
             merged_filters.coverage_period_from, merged_filters.coverage_period_to,
             merged_filters.written_date_from, merged_filters.written_date_to,
         ])
+
+    _MOST_RECENT_RE = re.compile(
+        r"\b(most\s+recent|latest|newest|last|most\s+recent\s+one)\b",
+        re.IGNORECASE,
+    )
+
+    def _is_most_recent_query(self, question: str) -> bool:
+        """True when the user is asking for the single most recently published document."""
+        return bool(self._MOST_RECENT_RE.search(question))
+
+    def _resolve_most_recent_doc(self, merged_filters: RetrievalFilters):
+        """Return the most recent PDFDocument matching the current broker/ticker filters.
+
+        Uses COALESCE(written_date, sent_date) so docs without a written_date still
+        sort by when they were sent.  Excludes docs whose written_date is implausibly
+        in the future (> today + 7 days) to avoid meeting-invite emails whose date
+        parser grabbed the event date instead of the sent date.
+        """
+        from datetime import date as _date
+        from sqlalchemy import text as _text, func as _func, or_ as _or_
+        from database import PDFDocument as _Doc
+
+        session = self.db.get_session()
+        try:
+            today = _date.today()
+            cutoff = today.replace(year=today.year + 1)  # anything > 1 year out is implausible
+
+            q = session.query(_Doc)
+
+            # Broker/sender filter (mirrors _sender_company_filter logic)
+            if merged_filters.sender_companies:
+                from database import _sender_company_filter
+                q = q.filter(_sender_company_filter(merged_filters.sender_companies))
+            if merged_filters.tickers:
+                from sqlalchemy import cast, Text
+                q = q.filter(_or_(*[
+                    cast(_Doc.tickers, Text).ilike(f"%{t}%")
+                    for t in merged_filters.tickers
+                ]))
+            if merged_filters.sector:
+                q = q.filter(_Doc.sector.ilike(f"%{merged_filters.sector}%"))
+            if merged_filters.report_type:
+                q = q.filter(_Doc.report_type == merged_filters.report_type)
+
+            # Exclude implausible future-dated docs; use COALESCE for ordering
+            q = q.filter(
+                (_Doc.written_date.is_(None)) | (_Doc.written_date <= cutoff)
+            )
+            effective = _func.coalesce(_Doc.written_date, _Doc.sent_date)
+            q = q.order_by(effective.desc().nullslast(), _Doc.id.desc())
+
+            doc = q.first()
+            return doc
+        finally:
+            session.close()
 
     def _is_underspecified(self, question: str, merged_filters: RetrievalFilters) -> bool:
         """Deterministic fallback for the model's is_underspecified judgment (used only if
@@ -1559,12 +1616,14 @@ Return ONLY a valid JSON object. No markdown, no explanation."""
             "Organize the answer into short paragraphs, each covering one idea or theme. "
             "Do NOT scatter citations inline after every sentence — it makes the text hard "
             "to read. Instead, write the prose cleanly, then place the supporting citations "
-            "together at the END of each paragraph on their own line, e.g. "
-            "'Sources: (report_a.pdf, p.3), (report_b.pdf, p.7)'.\n"
+            "together at the END of each paragraph on their own line.\n"
+            "IMPORTANT — use the EXACT filename from each chunk's 'source:' line in the "
+            "context. Filenames may end in .pdf or .eml — copy them verbatim. "
+            "Format: 'Sources: (exact_filename, p.3), (other_filename, p.7)'.\n"
             "CITE PRECISELY — this is critical:\n"
             "- Cite a (filename, page) ONLY if a specific statement in that paragraph is "
-            "directly drawn from that exact page's content. \n"
-            "- Do NOT list every page that happens to appear in the context. The context "
+            "directly drawn from that exact page's content.\n"
+            "- Do NOT list every page that appears in the context. The context "
             "includes neighbouring 'Parent'/'sibling' pages purely for background; do not "
             "cite those unless you actually used a fact from them.\n"
             "- The citation list should be the MINIMAL set of pages that supports what you "
@@ -1578,20 +1637,21 @@ Return ONLY a valid JSON object. No markdown, no explanation."""
             "  • Start EVERY item with its number and a closing parenthesis: '1)', '2)', "
             "'3)', ... (not '1.', not a bullet).\n"
             "  • Immediately BELOW each item, on its own line, put that item's citation "
-            "prefixed with 'Source:'. Include a page if you are sure of it "
-            "('Source: (filename.pdf, p.N)'); if you know the document but not the exact "
-            "page, cite the document alone ('Source: (filename.pdf)') — that is fine.\n"
+            "prefixed with 'Source:'. Use the EXACT filename from the context's 'source:' "
+            "line. Include a page if you are sure of it "
+            "('Source: (exact_filename, p.N)'); if you know the document but not the exact "
+            "page, cite the document alone ('Source: (exact_filename)') — that is fine.\n"
             "  • EVERY item MUST have a Source line naming a document that is actually in the "
             "provided context. If an item cannot be tied to any document in the context, DO "
             "NOT include it — choose a different, attributable one. Never output an item with "
             "no source, and never name a document that is not in the context.\n"
             "  • Each item's Source line cites only the document(s) backing THAT item; never "
             "share one citation block across items or move citations to the end.\n"
-            "Example:\n"
+            "Example (filenames here are illustrative — use the real ones from context):\n"
             "  1) Revenue grew 12% year over year.\n"
-            "     Source: (report_a.pdf, p.3)\n"
+            "     Source: (email_abc123.eml, p.3)\n"
             "  2) Operating margin expanded to 18%.\n"
-            "     Source: (report_b.pdf)"
+            "     Source: (email_def456.eml)"
         )
 
         # Follow-ups ("expand on that", "what about Baidu's Ernie model?", "summarize the
@@ -1605,6 +1665,32 @@ Return ONLY a valid JSON object. No markdown, no explanation."""
         # For queries that enumerate files rather than ask for content analysis,
         # skip chunk RAG entirely and return a document inventory.
         merged_filters = self._merge_filters(filters, analysis)
+
+        # "Most-recent" override: "give me the latest X report" is concrete intent, not a
+        # list or underspecified query. Intercept before the list_documents / clarify gates
+        # and resolve to the single most recent matching document.
+        if self._is_most_recent_query(question) and self._has_active_filter(merged_filters):
+            most_recent = self._resolve_most_recent_doc(merged_filters)
+            if most_recent:
+                print(f"[DEBUG] most-recent resolution → doc {most_recent.id} ({most_recent.filename})")
+                merged_filters = RetrievalFilters(
+                    document_ids=[most_recent.id],
+                    filenames=merged_filters.filenames,
+                    sender_names=merged_filters.sender_names,
+                    sender_companies=merged_filters.sender_companies,
+                    written_date_from=merged_filters.written_date_from,
+                    written_date_to=merged_filters.written_date_to,
+                    tickers=merged_filters.tickers,
+                    report_type=merged_filters.report_type,
+                    sector=merged_filters.sector,
+                    asset_class=merged_filters.asset_class,
+                    coverage_period_from=merged_filters.coverage_period_from,
+                    coverage_period_to=merged_filters.coverage_period_to,
+                )
+                if not standalone_query or not self._has_semantic_intent(standalone_query, merged_filters):
+                    standalone_query = "key findings summary overview"
+                query_type = "rag"
+                analysis["is_underspecified"] = False
 
         if query_type == "list_documents":
             return self._answer_list_query(question, standalone_query, merged_filters, analysis)

@@ -519,7 +519,12 @@ _HARD_NON_REPORT_RE = re.compile(
     r'account\s+statement|password\s+reset|login\s+alert|'
     r'invoice\s+(?:attached|enclosed)|order\s+(?:receipt|confirmation)|'
     r'sales\s+and\s+trading\s+(?:note|department)|'   # S&T notes are explicitly not research
-    r'not\s+a\s+product\s+of\s+(?:the\s+)?jefferies\s+research)\b',
+    r'not\s+a\s+product\s+of\s+(?:the\s+)?jefferies\s+research|'
+    r'one[-\s]time\s+password|'                       # OTP / 2FA emails
+    r'your\s+(?:verification|login|access)\s+code|'  # 2FA code delivery
+    r'your\s+otp\s+(?:is|for)|'
+    r'equity\s+sales\s+commentary|'                   # Nomura explicitly labels these "not research"
+    r'not\s+(?:a\s+)?(?:nomura\s+)?research\b)\b',   # "this is not research" disclaimers
     re.I,
 )
 
@@ -543,6 +548,7 @@ _INVITATION_RE = re.compile(
     r'dinner\s+invitation|'
     r'roadshow\s+invitation|'
     r'please\s+(?:join|register|confirm\s+your\s+attendance)|'
+    r'pls\s+(?:join|find|see\s+below\s+(?:for\s+)?(?:the\s+)?(?:dial|join|call))|'  # "pls join us"
     r'limited\s+(?:seats?|spaces?|spots?)\s+available|'
     r'click\s+(?:here\s+)?to\s+register|'
     # Corporate access invitation patterns (Daiwa, MS Japan, etc.)
@@ -571,10 +577,26 @@ _HARD_INVITATION_SUBJECT_RE = re.compile(
     r'\bdaily\s+summ(?:ary|aries)\b|'             # corporate access digest
     r'\bglobal\s+access\s+daily\b|'               # e.g. "Asia Pacific Global Access Daily"
     r'\bweekly\s+(?:download|update|digest)\b|'  # webinar series
-    r"What[’']s\s+Next\?|"                    # webinar series title (straight or curly apostrophe)
+    r"What[‘’]s\s+Next\?|"               # webinar series title (straight or curly apostrophe)
     r'\bwebinar\b|'                               # any webinar mention in subject
     r'\bpre[-\s]deal\s+investor\s+education\b|'  # IPO roadshow PDIE
-    r'\bmight\s+this\s+be\s+of\s+interest\b'     # Jefferies NDR/IPO solicitation phrase
+    r'\binvestor\s+education\b|'                  # IPO/deal investor education emails
+    r'\bmight\s+this\s+be\s+of\s+interest\b|'    # Jefferies NDR/IPO solicitation phrase
+    # Expert & group call invitations
+    r'\bexpert\s+(?:call|session|access)\b|'      # "Expert call - Call invitation: Huawei..."
+    r'\bgroup\s+call\b|'                          # "post-results group call with MP Materials"
+    r'\bcall\s+invitation\b|'                     # "Call invitation: ..."
+    r'\b(?:post|pre)[-\s]results?\s+(?:group\s+)?call\b|'
+    r'\bresults?\s+(?:group\s+)?call\b|'          # "results call", "results group call"
+    r'\bcorporate\s+access\b|'                    # corporate access events (any kind)
+    r'\bmanagement\s+(?:access|meeting|roadshow)\b|'
+    r'\binvestor\s+day\b|'                        # investor day events
+    r'\banalyst\s+day\b|'                         # analyst day events
+    r'\bone[-\s]time\s+password\b|'               # OTP emails ("Circle Login One-Time Password")
+    r'\bOTP\b|'                                   # OTP shorthand in subject
+    r'\blogin\s+(?:code|alert|otp)\b|'            # login notification emails
+    r'\bverification\s+code\b|'                   # 2FA code emails
+    r'\bconference\s+call\s+invitation\b'         # formal conference call invites
     r')',
     re.I,
 )
@@ -591,7 +613,10 @@ _COMPLIANCE_PDF_RE = re.compile(
     r'terms\s+(?:of\s+service|and\s+conditions)\b|'
     r'annual\s+report\s+to\s+(?:shareholders|investors)\b|'
     r'proxy\s+statement\b|'
-    r'material\s+changes?\s+(?:to|in)\s+(?:our|the)\s+(?:firm|business|services)\b'
+    r'material\s+changes?\s+(?:to|in)\s+(?:our|the)\s+(?:firm|business|services)\b|'
+    r'selling\s+restrictions?\b|'              # prospectus/offering selling restrictions
+    r'regulation\s+s\b.{0,200}rule\s+144a\b|' # Reg S + Rule 144A = offering doc
+    r'qualified\s+institutional\s+buyer'       # QIB language in offering docs
     r')\b'
     # Chinese compliance/legal document signals (免责声明-only docs, regulatory filings)
     r'|招股(?:说明)?书'      # prospectus

@@ -9,10 +9,10 @@ export interface Citation {
 }
 
 // Capturing: group 1 = filename (may contain one level of nested parens, e.g.
-// "91APP (6741).pdf"), group 2 = page spec (OPTIONAL — document-level citations like
-// "(report.pdf)" have no page). Global + case-insensitive.
+// "91APP (6741).pdf" or "email_abc123.eml"), group 2 = page spec (OPTIONAL).
+// Global + case-insensitive. Matches both .pdf and .eml document citations.
 export const CITATION_RE =
-  /\(((?:[^()]|\([^()]*\))*?\.pdf)(?:[\s,]+((?:pp?\.?|pages?)?\s*\d[\d,\s\-–]*))?\)/gi;
+  /\(((?:[^()]|\([^()]*\))*?\.(?:pdf|eml))(?:[\s,]+((?:pp?\.?|pages?)?\s*\d[\d,\s\-–]*))?\)/gi;
 
 /** Extract page numbers from a citation page spec, expanding ranges.
  *  "pages 9, 11, 12" -> [9, 11, 12];  "pp. 3-5" -> [3, 4, 5]. */
